@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/icon.png" width="180" alt="WeChat Multi icon" />
+</p>
+
 # WeChat Multi
 
 > Run multiple WeChat accounts side by side on macOS — from a single menu bar icon.

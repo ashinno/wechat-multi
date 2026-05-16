@@ -25,6 +25,17 @@ mkdir -p "${APP_BUNDLE}/Contents/Resources"
 cp "${BUILD_DIR}/WeChatMulti" "${APP_BUNDLE}/Contents/MacOS/WeChatMulti"
 cp "Resources/Info.plist" "${APP_BUNDLE}/Contents/Info.plist"
 
+# App icon. Regenerate the .icns if the source script is newer than the bundled
+# version (no-op on most builds). Then ship it into the .app's Resources.
+if [[ -f "Resources/AppIcon.icns" && \
+      "tools/make_icon.swift" -nt "Resources/AppIcon.icns" ]]; then
+    echo "==> Icon script newer than .icns — regenerating…"
+    ./tools/make_icns.sh
+fi
+if [[ -f "Resources/AppIcon.icns" ]]; then
+    cp "Resources/AppIcon.icns" "${APP_BUNDLE}/Contents/Resources/AppIcon.icns"
+fi
+
 # Make sure the binary is executable
 chmod +x "${APP_BUNDLE}/Contents/MacOS/WeChatMulti"
 

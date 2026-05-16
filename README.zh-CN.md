@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/icon.png" width="180" alt="WeChat Multi 图标" />
+</p>
+
 # WeChat Multi
 
 > 在 macOS 上同时运行多个微信账号 —— 只需菜单栏一个图标。

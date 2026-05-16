@@ -476,9 +476,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         has its own sandbox container, WeChat's built-in singleton check is \
         bypassed and each instance has its own login state.
 
-        Version 1.1
+        Version 1.1.1
         """
         alert.alertStyle = .informational
+        // Force the app-icon for the About panel. NSAlert normally inherits
+        // NSApp.applicationIconImage, but LSUIElement apps can fall back to the
+        // generic app icon on first launch before LaunchServices has cached it.
+        if let icon = NSImage(named: "AppIcon")
+            ?? NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath) as NSImage? {
+            alert.icon = icon
+        }
         alert.addButton(withTitle: "OK")
         alert.runModal()
     }
