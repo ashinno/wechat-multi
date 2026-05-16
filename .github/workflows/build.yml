@@ -1,0 +1,57 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain versions
+        run: |
+          sw_vers
+          swift --version
+          xcrun --show-sdk-path
+
+      - name: Build (universal)
+        run: |
+          swift build -c release \
+            --arch arm64 \
+            --arch x86_64
+
+      - name: Verify binary slices
+        run: |
+          BIN=".build/apple/Products/Release/WeChatMulti"
+          if [ ! -f "$BIN" ]; then
+            BIN=$(find .build -type f -name "WeChatMulti" -perm +111 | head -1)
+          fi
+          echo "Binary: $BIN"
+          file "$BIN"
+          lipo -info "$BIN" || true
+
+      - name: Assemble .app bundle (sans icon regen)
+        run: |
+          # Mimic build.sh but skip swift build (already built above) and the
+          # icon regeneration (we ship the prebuilt .icns in the repo).
+          APP="dist/WeChat Multi.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          BIN=$(find .build -type f -name "WeChatMulti" -perm +111 | grep -v Intermediates | head -1)
+          cp "$BIN" "$APP/Contents/MacOS/WeChatMulti"
+          cp Resources/Info.plist "$APP/Contents/Info.plist"
+          [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+          codesign --force --deep --sign - "$APP" 2>/dev/null || true
+          ls -la "$APP/Contents"

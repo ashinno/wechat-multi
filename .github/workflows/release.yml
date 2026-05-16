@@ -1,0 +1,92 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v1.2.0) — must already exist"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Resolve version
+        id: ver
+        run: |
+          REF="${{ github.event.inputs.tag || github.ref_name }}"
+          # ref_name on a tag push is the tag itself (e.g. v1.2.0)
+          VERSION="${REF#v}"
+          echo "tag=$REF" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing tag=$REF version=$VERSION"
+
+      - name: Build universal binary
+        run: |
+          swift build -c release \
+            --arch arm64 \
+            --arch x86_64
+
+      - name: Assemble .app bundle
+        run: |
+          APP="dist/WeChat Multi.app"
+          rm -rf "$APP"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          BIN=$(find .build -type f -name "WeChatMulti" -perm +111 | grep -v Intermediates | head -1)
+          cp "$BIN" "$APP/Contents/MacOS/WeChatMulti"
+          chmod +x "$APP/Contents/MacOS/WeChatMulti"
+          cp Resources/Info.plist "$APP/Contents/Info.plist"
+          [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+          codesign --force --deep --sign - "$APP"
+          xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
+          lipo -info "$APP/Contents/MacOS/WeChatMulti"
+
+      - name: Zip
+        run: |
+          ZIP="dist/WeChat-Multi-${{ steps.ver.outputs.tag }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "dist/WeChat Multi.app" "$ZIP"
+          ls -lh "$ZIP"
+          shasum -a 256 "$ZIP"
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          ZIP="dist/WeChat-Multi-${TAG}.zip"
+          SHA=$(shasum -a 256 "$ZIP" | awk '{print $1}')
+          NOTES=$(cat <<EOF
+          Universal build (arm64 + x86_64) produced by GitHub Actions.
+
+          SHA256: \`$SHA\`
+
+          Install:
+          1. Download \`WeChat-Multi-${TAG}.zip\` below
+          2. Unzip and drag **WeChat Multi.app** into \`/Applications\`
+          3. First launch: right-click → **Open** (ad-hoc signed, not notarized)
+          4. Look for **WC** in your menu bar
+
+          See [README](https://github.com/${{ github.repository }}/blob/main/README.md) for full usage.
+          EOF
+          )
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists — uploading asset"
+            gh release upload "$TAG" "$ZIP" --clobber
+          else
+            echo "Creating draft release $TAG"
+            gh release create "$TAG" "$ZIP" \
+              --title "${TAG}" \
+              --notes "$NOTES" \
+              --draft
+          fi

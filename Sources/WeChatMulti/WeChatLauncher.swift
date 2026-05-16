@@ -73,6 +73,41 @@ final class WeChatLauncher {
         return slotName(slot: slot) ?? "WeChat \(slot)"
     }
 
+    // MARK: - Per-slot colors
+
+    /// Returns a stable, distinct color for the given slot so users can tell
+    /// instances apart at a glance. Slot 0 (the original WeChat) always uses
+    /// the WeChat green; clone slots cycle through a palette that maps well
+    /// in both light and dark menu contexts.
+    func slotColor(slot: Int) -> NSColor {
+        if slot == 0 {
+            return NSColor(srgbRed: 0.027, green: 0.757, blue: 0.376, alpha: 1.0)
+        }
+        let palette: [NSColor] = [
+            .systemBlue, .systemPurple, .systemOrange, .systemPink,
+            .systemTeal, .systemIndigo, .systemRed, .systemYellow
+        ]
+        let index = (abs(slot) - 1) % palette.count
+        return palette[index]
+    }
+
+    /// Renders a small filled circle in the slot's color, ready to be shown as
+    /// an NSMenuItem.image. Uses NSImage's deferred draw block so the image
+    /// re-renders correctly when the menu opens in a different appearance
+    /// (e.g. light → dark mode).
+    func slotDotImage(slot: Int, size: CGFloat = 14) -> NSImage {
+        let color = slotColor(slot: slot)
+        return NSImage(size: NSSize(width: size, height: size),
+                       flipped: false) { rect in
+            color.setFill()
+            // Inset by 1px so the circle has a hairline of breathing room
+            // against neighboring menu text.
+            let path = NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1))
+            path.fill()
+            return true
+        }
+    }
+
     // MARK: - Version detection
 
     /// Reads CFBundleShortVersionString from the source `/Applications/WeChat.app`.
@@ -123,6 +158,12 @@ final class WeChatLauncher {
         case failed(String)
     }
 
+    /// Stages that prepareClone / refreshClone report so the UI can show a
+    /// human-readable status during the otherwise-silent multi-second copy.
+    /// Invoked from whatever queue the launcher runs on — callers should
+    /// marshal to main themselves.
+    typealias ProgressCallback = (_ stage: String) -> Void
+
     func cloneURL(for slot: Int) -> URL {
         cloneRoot.appendingPathComponent("WeChat \(slot).app", isDirectory: true)
     }
@@ -137,7 +178,8 @@ final class WeChatLauncher {
 
     /// Materializes a clone for the given slot if it does not already exist.
     /// Performs the bundle copy, bundle-ID rewrite, and ad-hoc re-sign.
-    func prepareClone(slot: Int) -> PrepareResult {
+    /// Reports stage transitions through the optional `progress` callback.
+    func prepareClone(slot: Int, progress: ProgressCallback? = nil) -> PrepareResult {
         guard let source = wechatAppPath else { return .sourceMissing }
         let target = cloneURL(for: slot)
 
@@ -152,12 +194,14 @@ final class WeChatLauncher {
             return .failed("Could not create clones directory: \(error.localizedDescription)")
         }
 
+        progress?("Copying WeChat.app (one-time setup)…")
         // APFS supports copy-on-write clones, so `cp -Rc` is nearly instant for the
         // hundreds of MB that WeChat.app weighs in at.
         if let copyError = run("/bin/cp", ["-Rc", source, target.path]) {
             return .failed("Copying WeChat.app failed: \(copyError)")
         }
 
+        progress?("Configuring & re-signing…")
         // Rewrite the bundle identifier and display names so macOS treats this clone
         // as a separate app with its own sandbox container.
         if let writeError = writeIdentityToBundle(at: target, slot: slot) {
@@ -182,16 +226,17 @@ final class WeChatLauncher {
     /// Deletes the on-disk clone bundle and recreates it from the current
     /// WeChat.app. The sandbox container lives in a separate path keyed by
     /// bundle ID, so the user's WeChat session survives a refresh.
-    func refreshClone(slot: Int) -> PrepareResult {
+    func refreshClone(slot: Int, progress: ProgressCallback? = nil) -> PrepareResult {
         let target = cloneURL(for: slot)
         if FileManager.default.fileExists(atPath: target.path) {
+            progress?("Removing old bundle…")
             do {
                 try FileManager.default.removeItem(at: target)
             } catch {
                 return .failed("Could not remove old clone: \(error.localizedDescription)")
             }
         }
-        return prepareClone(slot: slot)
+        return prepareClone(slot: slot, progress: progress)
     }
 
     /// Writes our identity (bundle ID + display name) into a clone bundle's
@@ -258,22 +303,30 @@ final class WeChatLauncher {
     }
 
     /// Picks the lowest free slot, prepares its clone, and launches it.
-    func launchNextAvailableInstance() -> LaunchResult {
+    func launchNextAvailableInstance(progress: ProgressCallback? = nil) -> LaunchResult {
         let running = Set(runningInstances().map { $0.slot })
         var slot = 1
         while running.contains(slot) {
             slot += 1
         }
-        return launchSpecificInstance(slot: slot)
+        return launchSpecificInstance(slot: slot, progress: progress)
     }
 
-    func launchSpecificInstance(slot: Int) -> LaunchResult {
-        switch prepareClone(slot: slot) {
+    /// Returns true when launching this slot will require the slow one-time
+    /// clone copy. Callers use this to decide whether to surface a progress UI.
+    func slotNeedsPreparation(slot: Int) -> Bool {
+        !cloneExists(slot: slot)
+    }
+
+    func launchSpecificInstance(slot: Int,
+                                progress: ProgressCallback? = nil) -> LaunchResult {
+        switch prepareClone(slot: slot, progress: progress) {
         case .sourceMissing:
             return .sourceMissing
         case .failed(let reason):
             return .failed(reason)
         case .ready(let url):
+            progress?("Launching…")
             if let err = run("/usr/bin/open", ["-na", url.path]) {
                 return .failed("open failed: \(err)")
             }

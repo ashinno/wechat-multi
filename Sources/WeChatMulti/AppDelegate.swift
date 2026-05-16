@@ -3,6 +3,7 @@ import Cocoa
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let launcher = WeChatLauncher()
+    private let preparationPanel = PreparationPanel()
     private var refreshTimer: Timer?
     private var isPreparing = false
 
@@ -158,6 +159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             for info in instances {
                 let label = displayLabel(for: info)
                 let item = NSMenuItem(title: label, action: nil, keyEquivalent: "")
+                item.image = launcher.slotDotImage(slot: info.slot)
                 let sub = NSMenu()
 
                 let revealItem = NSMenuItem(title: "Bring to Front",
@@ -257,11 +259,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         setStatusImage(named: busySymbolName)
         rebuildMenu()
 
+        // Determine the slot the launcher will pick so we can preview the
+        // title in the progress panel. Mirrors the lowest-free-slot logic.
+        let running = Set(launcher.runningInstances().map(\.slot))
+        var previewSlot = 1
+        while running.contains(previewSlot) { previewSlot += 1 }
+        let needsPrep = launcher.slotNeedsPreparation(slot: previewSlot)
+        if needsPrep {
+            let name = launcher.slotName(slot: previewSlot) ?? "Slot \(previewSlot)"
+            preparationPanel.showAfterDelay(title: "Preparing \(name)…")
+        }
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            let result = self.launcher.launchNextAvailableInstance()
+            let result = self.launcher.launchNextAvailableInstance { stage in
+                self.preparationPanel.updateStatus(stage)
+            }
 
             DispatchQueue.main.async {
+                self.preparationPanel.hide()
                 self.isPreparing = false
                 self.setStatusImage(named: self.idleSymbolName)
                 switch result {
@@ -430,12 +446,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         isPreparing = true
         setStatusImage(named: busySymbolName)
         rebuildMenu()
+        preparationPanel.showAfterDelay(title: "Refreshing \(stale.count) clone\(stale.count == 1 ? "" : "s")…")
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
 
             // Quit anything that needs to be replaced.
             for slot in running {
+                self.preparationPanel.updateStatus("Quitting Slot \(slot)…")
                 if let pid = self.launcher.runningInstances().first(where: { $0.slot == slot })?.pid {
                     self.launcher.quitInstance(pid: pid)
                 }
@@ -443,8 +461,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             usleep(700_000)
 
             var failures: [String] = []
-            for slot in stale {
-                switch self.launcher.refreshClone(slot: slot) {
+            for (index, slot) in stale.enumerated() {
+                let name = self.launcher.slotName(slot: slot) ?? "Slot \(slot)"
+                self.preparationPanel.updateStatus("Rebuilding \(name) (\(index + 1) of \(stale.count))…")
+                switch self.launcher.refreshClone(slot: slot, progress: { stage in
+                    self.preparationPanel.updateStatus("\(name): \(stage)")
+                }) {
                 case .ready: break
                 case .sourceMissing:
                     failures.append("Slot \(slot): WeChat.app missing")
@@ -454,6 +476,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
 
             DispatchQueue.main.async {
+                self.preparationPanel.hide()
                 self.isPreparing = false
                 self.setStatusImage(named: self.idleSymbolName)
                 if !failures.isEmpty {
@@ -476,7 +499,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         has its own sandbox container, WeChat's built-in singleton check is \
         bypassed and each instance has its own login state.
 
-        Version 1.1.1
+        Version 1.2
         """
         alert.alertStyle = .informational
         // Force the app-icon for the About panel. NSAlert normally inherits

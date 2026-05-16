@@ -11,6 +11,7 @@
 ![platform](https://img.shields.io/badge/platform-macOS%2012%2B-blue)
 ![swift](https://img.shields.io/badge/swift-5.7%2B-orange)
 ![license](https://img.shields.io/badge/license-MIT-green)
+[![build](https://github.com/ashinno/wechat-multi/actions/workflows/build.yml/badge.svg)](https://github.com/ashinno/wechat-multi/actions/workflows/build.yml)
 
 WeChat for Mac enforces a singleton: it only lets you launch one copy at a
 time and silently kills any second process. **WeChat Multi** gets around that
@@ -70,12 +71,17 @@ click → Open the first time because it's ad-hoc signed.
 - 🍎 **Native menu bar app** — no Dock clutter, no Electron, ~190 KB binary
 - ⚡ **One click to launch** a new, isolated WeChat instance
 - 🏷️ **Per-slot custom names** ("Work", "Personal") — shown in Cmd+Tab and Dock
+- 🎨 **Color-coded avatars** — each clone gets a distinct dot color so you can
+  tell instances apart at a glance
+- 📊 **Progress panel during first-time clone** so you know it isn't hung
+  during the multi-second copy + sign step
 - 🔄 **Auto-detects WeChat updates** and offers to refresh stale clones,
   preserving each clone's signed-in session
 - 📋 **Lists running instances** with their PIDs and start times
 - 🪟 **Bring any instance to the front**, quit individual instances, or quit all
 - 🔍 **Auto-detects WeChat** in `/Applications`; falls back to a file picker
-- 🖥️ **Apple Silicon native**, ad-hoc signed, no third-party dependencies
+- 🖥️ **Universal binary** (arm64 + x86_64), ad-hoc signed, no third-party
+  dependencies
 
 ## Requirements
 

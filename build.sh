@@ -10,12 +10,22 @@ APP_BUNDLE="${DIST_DIR}/${APP_NAME}.app"
 cd "$(dirname "$0")"
 
 echo "==> Building release binary…"
-swift build -c release
+# UNIVERSAL=1 ./build.sh produces an arm64 + x86_64 fat binary (CI uses this).
+if [[ "${UNIVERSAL:-0}" == "1" ]]; then
+    swift build -c release --arch arm64 --arch x86_64
+    BUILD_DIR=".build/apple/Products/Release"
+else
+    swift build -c release
+fi
 
-if [[ ! -f "${BUILD_DIR}/WeChatMulti" ]]; then
-    echo "Error: build did not produce ${BUILD_DIR}/WeChatMulti" >&2
+# Resolve the actual binary path — SPM puts universal builds in a different
+# location than single-arch builds.
+BIN_PATH=$(find .build -type f -name "WeChatMulti" -perm +111 2>/dev/null | grep -v Intermediates | head -1)
+if [[ -z "${BIN_PATH}" || ! -f "${BIN_PATH}" ]]; then
+    echo "Error: build did not produce a WeChatMulti binary" >&2
     exit 1
 fi
+BUILD_DIR=$(dirname "${BIN_PATH}")
 
 echo "==> Assembling app bundle…"
 rm -rf "${APP_BUNDLE}"
