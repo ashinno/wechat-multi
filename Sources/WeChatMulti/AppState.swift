@@ -28,6 +28,11 @@ final class AppState: ObservableObject {
     var onRefreshStale: () -> Void = { }
     var onOpenPreferences: () -> Void = { }
     var onCloseMenu: () -> Void = { }
+    var onQuitAllInstances: () -> Void = { }
+
+    var hasRunningInstances: Bool {
+        accounts.contains(where: { $0.isRunning })
+    }
 
     init(launcher: WeChatLauncher) {
         self.launcher = launcher

@@ -86,12 +86,16 @@ struct MenuPanelView: View {
         } else {
             VStack(alignment: .leading, spacing: 1) {
                 ForEach(state.accounts) { account in
-                    AccountRow(account: account) {
+                    AccountRow(account: account,
+                               canQuitAll: state.hasRunningInstances) {
                         state.handleRowClick(account)
                     } onQuit: {
                         state.quitAccount(account)
                     } onRename: {
                         promptRename(for: account)
+                    } onQuitAll: {
+                        state.onCloseMenu()
+                        state.onQuitAllInstances()
                     }
                 }
             }
@@ -207,9 +211,11 @@ struct MenuPanelView: View {
 
 private struct AccountRow: View {
     let account: Account
+    let canQuitAll: Bool
     let onTap: () -> Void
     let onQuit: () -> Void
     let onRename: () -> Void
+    let onQuitAll: () -> Void
 
     @State private var isHovered = false
 
@@ -248,6 +254,10 @@ private struct AccountRow: View {
             if account.id > 0 {
                 Divider()
                 Button("Rename…", action: onRename)
+            }
+            if canQuitAll {
+                Divider()
+                Button("Quit All Running Instances", role: .destructive, action: onQuitAll)
             }
         }
     }

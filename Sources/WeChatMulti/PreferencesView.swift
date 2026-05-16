@@ -72,6 +72,7 @@ struct PreferencesView: View {
                     Text("·")
                         .foregroundStyle(.tertiary)
                     Text("Universal · macOS 13+")
+                        .accessibilityLabel("Universal binary for macOS 13 and later")
                         .font(.system(size: 11))
                 }
                 .foregroundStyle(.secondary)
@@ -262,6 +263,12 @@ struct PreferencesView: View {
                     Button("Refresh Outdated…") {
                         NSApp.keyWindow?.close()
                         state.onRefreshStale()
+                    }
+                }
+                if state.hasRunningInstances {
+                    Button("Quit All Running") {
+                        NSApp.keyWindow?.close()
+                        state.onQuitAllInstances()
                     }
                 }
                 Spacer()
