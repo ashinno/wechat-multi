@@ -377,25 +377,42 @@ final class WeChatLauncher {
             let startTime = parts[1..<6].joined(separator: " ")
             let command = parts[6..<parts.count].joined(separator: " ")
 
-            // Original WeChat main process
-            if command.hasSuffix("/WeChat.app/Contents/MacOS/WeChat") ||
-               command.hasSuffix("/微信.app/Contents/MacOS/WeChat") ||
-               command.hasSuffix("/微信.app/Contents/MacOS/微信") {
-                let bundle = command.replacingOccurrences(of: "/Contents/MacOS/WeChat", with: "")
-                                    .replacingOccurrences(of: "/Contents/MacOS/微信", with: "")
+            // First gate: must end with the main WeChat executable. WeChat ships
+            // helper binaries (WeChatAppEx, WeChatPlugin, crashpad_handler, etc.)
+            // inside nested .app bundles; none of them are named just "WeChat"
+            // or "微信" so this check excludes them cleanly.
+            let isWeChatBinary = command.hasSuffix("/Contents/MacOS/WeChat") ||
+                                 command.hasSuffix("/Contents/MacOS/微信")
+            guard isWeChatBinary else { continue }
 
-                // Was it launched from our clone root?
-                if bundle.hasPrefix(cloneRootPath) {
-                    // Extract slot number from "WeChat <N>.app"
-                    let bundleName = (bundle as NSString).lastPathComponent
-                    let digits = bundleName.filter { $0.isNumber }
-                    let slot = Int(digits) ?? -1
-                    results.append(InstanceInfo(slot: slot, pid: pid,
-                                                 startTime: startTime, bundlePath: bundle))
-                } else {
-                    results.append(InstanceInfo(slot: 0, pid: pid,
-                                                 startTime: startTime, bundlePath: bundle))
-                }
+            let bundle = command
+                .replacingOccurrences(of: "/Contents/MacOS/WeChat", with: "")
+                .replacingOccurrences(of: "/Contents/MacOS/微信", with: "")
+
+            // Defend against WeChat's nested helper bundle, which technically
+            // has the path …/WeChat.app/Contents/MacOS/WeChatAppEx.app — the
+            // suffix check above already filters this, but be doubly safe by
+            // requiring the bundle to end with a .app component we recognize.
+            let bundleName = (bundle as NSString).lastPathComponent
+            guard bundleName.hasSuffix(".app") else { continue }
+
+            // Categorize: clone (under our cloneRoot, name "WeChat <N>.app")
+            // or the original (anywhere else, typically /Applications/WeChat.app).
+            if bundle.hasPrefix(cloneRootPath) {
+                // Clone naming convention: "WeChat <N>.app". Anything that
+                // matches the prefix+suffix but doesn't have a parseable slot
+                // number is treated as a stray and skipped.
+                let trimmedName = bundleName
+                    .dropFirst("WeChat ".count)
+                    .dropLast(".app".count)
+                guard bundleName.hasPrefix("WeChat "),
+                      let slot = Int(trimmedName), slot > 0 else { continue }
+                results.append(InstanceInfo(slot: slot, pid: pid,
+                                             startTime: startTime, bundlePath: bundle))
+            } else if bundleName == "WeChat.app" || bundleName == "微信.app" {
+                // The original /Applications/WeChat.app (slot 0).
+                results.append(InstanceInfo(slot: 0, pid: pid,
+                                             startTime: startTime, bundlePath: bundle))
             }
         }
         return results.sorted { $0.slot < $1.slot }

@@ -126,13 +126,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
         } else {
             appState.refresh()
             guard let button = statusItem.button else { return }
-            // Anchor to the BOTTOM edge of the button via a 1pt-tall strip.
-            // Using full button.bounds + preferredEdge: .minY worked in tests
-            // but on some menubars left a visible gap; explicitly anchoring
-            // a thin rect at y=0 (window-coord bottom of button) parks the
-            // popover's arrow tip flush against the menu bar.
-            let anchor = NSRect(x: 0, y: 0, width: button.bounds.width, height: 1)
-            popover.show(relativeTo: anchor, of: button, preferredEdge: .minY)
+            // Standard menubar-popover pattern: anchor to the full button
+            // bounds with preferredEdge: .minY (the bottom edge in window
+            // coords). NSPopover centers the arrow on that edge and parks
+            // the body below, so the arrow tip touches the menu bar bottom
+            // without intruding into the icon. The earlier thin-strip anchor
+            // produced a half-pt shift upward that visually overlapped the
+            // icon area on some displays.
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
     }
 
