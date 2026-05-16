@@ -120,6 +120,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        // ── Stale clone warning ─────────────────────────────────────────────
+        // If /Applications/WeChat.app has been updated, the clones still hold
+        // the old binary and will probably misbehave on next launch.
+        let stale = installed ? launcher.staleClones() : []
+        if !stale.isEmpty {
+            let warning = NSMenuItem(title: "⚠️ \(stale.count) clone\(stale.count == 1 ? "" : "s") out of date",
+                                     action: nil, keyEquivalent: "")
+            warning.isEnabled = false
+            menu.addItem(warning)
+
+            let refreshItem = NSMenuItem(title: "Refresh Outdated Clones…",
+                                         action: #selector(refreshStaleAction),
+                                         keyEquivalent: "")
+            refreshItem.target = self
+            refreshItem.isEnabled = !isPreparing
+            menu.addItem(refreshItem)
+
+            menu.addItem(NSMenuItem.separator())
+        }
+
         // ── Launch new ──────────────────────────────────────────────────────
         let launchItem = NSMenuItem(title: "Launch New Instance",
                                     action: #selector(launchNewInstance),
@@ -136,15 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(runningHeader)
 
             for info in instances {
-                let label: String
-                if info.slot == 0 {
-                    label = "Main account — PID \(info.pid)"
-                } else if info.slot < 0 {
-                    label = "Clone — PID \(info.pid)"
-                } else {
-                    label = "Slot \(info.slot) — PID \(info.pid)"
-                }
-
+                let label = displayLabel(for: info)
                 let item = NSMenuItem(title: label, action: nil, keyEquivalent: "")
                 let sub = NSMenu()
 
@@ -161,6 +173,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 quitItem.target = self
                 quitItem.representedObject = info.pid
                 sub.addItem(quitItem)
+
+                // Renaming only makes sense for clones, not the original.
+                if info.slot > 0 {
+                    sub.addItem(NSMenuItem.separator())
+                    let renameItem = NSMenuItem(title: "Rename…",
+                                                action: #selector(renameSlotAction(_:)),
+                                                keyEquivalent: "")
+                    renameItem.target = self
+                    renameItem.representedObject = info.slot
+                    sub.addItem(renameItem)
+                }
 
                 if !info.startTime.isEmpty {
                     sub.addItem(NSMenuItem.separator())
@@ -343,6 +366,105 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    @objc private func renameSlotAction(_ sender: NSMenuItem) {
+        guard let slot = sender.representedObject as? Int, slot > 0 else { return }
+
+        let currentName = launcher.slotName(slot: slot)
+        let placeholder = "WeChat \(slot)"
+
+        let alert = NSAlert()
+        alert.messageText = "Rename Slot \(slot)"
+        alert.informativeText = "Give this instance a memorable name like \"Work\" or \"Personal\". Cmd+Tab and the Dock will pick up the new name the next time you launch it."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        if currentName != nil {
+            alert.addButton(withTitle: "Reset")
+        }
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.placeholderString = placeholder
+        field.stringValue = currentName ?? ""
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        let response = alert.runModal()
+        switch response {
+        case .alertFirstButtonReturn: // Save
+            let trimmed = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let err = launcher.renameClone(slot: slot, newName: trimmed.isEmpty ? nil : trimmed) {
+                showAlert(title: "Rename Failed", message: err)
+            }
+        case .alertThirdButtonReturn: // Reset to default
+            if let err = launcher.renameClone(slot: slot, newName: nil) {
+                showAlert(title: "Rename Failed", message: err)
+            }
+        default:
+            return
+        }
+        rebuildMenu()
+    }
+
+    @objc private func refreshStaleAction() {
+        let stale = launcher.staleClones()
+        guard !stale.isEmpty else { return }
+
+        let running = Set(launcher.runningSlotsBlocking(stale))
+        let alert = NSAlert()
+        alert.messageText = "Refresh \(stale.count) outdated clone\(stale.count == 1 ? "" : "s")?"
+        var detail = """
+        WeChat updated since these clones were created. Refreshing rebuilds them \
+        from the current /Applications/WeChat.app. Your signed-in WeChat session \
+        on each clone is preserved — only the app binary is replaced.
+        """
+        if !running.isEmpty {
+            let list = running.sorted().map { "Slot \($0)" }.joined(separator: ", ")
+            detail += "\n\nThese clones are currently running and will be quit first: \(list)."
+        }
+        alert.informativeText = detail
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Refresh")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        isPreparing = true
+        setStatusImage(named: busySymbolName)
+        rebuildMenu()
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+
+            // Quit anything that needs to be replaced.
+            for slot in running {
+                if let pid = self.launcher.runningInstances().first(where: { $0.slot == slot })?.pid {
+                    self.launcher.quitInstance(pid: pid)
+                }
+            }
+            usleep(700_000)
+
+            var failures: [String] = []
+            for slot in stale {
+                switch self.launcher.refreshClone(slot: slot) {
+                case .ready: break
+                case .sourceMissing:
+                    failures.append("Slot \(slot): WeChat.app missing")
+                case .failed(let reason):
+                    failures.append("Slot \(slot): \(reason)")
+                }
+            }
+
+            DispatchQueue.main.async {
+                self.isPreparing = false
+                self.setStatusImage(named: self.idleSymbolName)
+                if !failures.isEmpty {
+                    self.showAlert(title: "Some Clones Could Not Be Refreshed",
+                                   message: failures.joined(separator: "\n"))
+                }
+                self.rebuildMenu()
+            }
+        }
+    }
+
     @objc private func showAbout() {
         let alert = NSAlert()
         alert.messageText = "WeChat Multi"
@@ -354,11 +476,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         has its own sandbox container, WeChat's built-in singleton check is \
         bypassed and each instance has its own login state.
 
-        Version 1.0
+        Version 1.1
         """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+
+    private func displayLabel(for info: WeChatLauncher.InstanceInfo) -> String {
+        if info.slot == 0 {
+            return "Main account — PID \(info.pid)"
+        }
+        if info.slot < 0 {
+            return "Clone — PID \(info.pid)"
+        }
+        if let name = launcher.slotName(slot: info.slot) {
+            return "\(name) (Slot \(info.slot)) — PID \(info.pid)"
+        }
+        return "Slot \(info.slot) — PID \(info.pid)"
     }
 
     private func showAlert(title: String, message: String) {

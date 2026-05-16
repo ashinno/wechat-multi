@@ -14,6 +14,7 @@ final class WeChatLauncher {
 
     private let defaults = UserDefaults.standard
     private let customPathKey = "WeChatAppPath"
+    private let slotNamesKey = "SlotNames"
 
     private let defaultPaths = [
         "/Applications/WeChat.app",
@@ -42,6 +43,76 @@ final class WeChatLauncher {
 
     func clearCustomPath() {
         defaults.removeObject(forKey: customPathKey)
+    }
+
+    // MARK: - Custom slot names
+
+    /// Returns the user-assigned name for the given slot, or nil if it has the
+    /// default name. Slot 0 (the original WeChat.app) is intentionally unnamed —
+    /// we don't try to manage its display name.
+    func slotName(slot: Int) -> String? {
+        guard slot > 0 else { return nil }
+        let dict = defaults.dictionary(forKey: slotNamesKey) as? [String: String] ?? [:]
+        return dict["\(slot)"]
+    }
+
+    func setSlotName(slot: Int, name: String?) {
+        guard slot > 0 else { return }
+        var dict = defaults.dictionary(forKey: slotNamesKey) as? [String: String] ?? [:]
+        if let name, !name.isEmpty {
+            dict["\(slot)"] = name
+        } else {
+            dict.removeValue(forKey: "\(slot)")
+        }
+        defaults.set(dict, forKey: slotNamesKey)
+    }
+
+    /// The name we should write into the clone's Info.plist — the user's
+    /// custom name if set, otherwise "WeChat <slot>" as a default.
+    func cloneDisplayName(slot: Int) -> String {
+        return slotName(slot: slot) ?? "WeChat \(slot)"
+    }
+
+    // MARK: - Version detection
+
+    /// Reads CFBundleShortVersionString from the source `/Applications/WeChat.app`.
+    /// Used to decide which clones are stale and need a refresh.
+    func wechatAppVersion() -> String? {
+        guard let appPath = wechatAppPath else { return nil }
+        return readPlistString(at: "\(appPath)/Contents/Info.plist",
+                               key: "CFBundleShortVersionString")
+    }
+
+    func cloneVersion(slot: Int) -> String? {
+        let plist = cloneURL(for: slot).appendingPathComponent("Contents/Info.plist").path
+        return readPlistString(at: plist, key: "CFBundleShortVersionString")
+    }
+
+    /// Slots whose on-disk clone version differs from the current WeChat.app version.
+    /// If the source version cannot be read, returns an empty array (we can't decide).
+    func staleClones() -> [Int] {
+        guard let sourceVersion = wechatAppVersion() else { return [] }
+        return existingCloneSlots().filter { slot in
+            // Treat unreadable clone Info.plist as stale so the user is nudged
+            // to rebuild a corrupt bundle.
+            guard let cloneVer = cloneVersion(slot: slot) else { return true }
+            return cloneVer != sourceVersion
+        }
+    }
+
+    /// Of the supplied slots, which ones are currently running. Refresh requires
+    /// these to be quit first, since we can't replace a live bundle reliably.
+    func runningSlotsBlocking(_ slots: [Int]) -> [Int] {
+        let running = Set(runningInstances().map(\.slot))
+        return slots.filter { running.contains($0) }
+    }
+
+    private func readPlistString(at path: String, key: String) -> String? {
+        guard let data = FileManager.default.contents(atPath: path),
+              let plist = try? PropertyListSerialization.propertyList(from: data,
+                                                                       format: nil) as? [String: Any]
+        else { return nil }
+        return plist[key] as? String
     }
 
     // MARK: - Clone management
@@ -89,32 +160,67 @@ final class WeChatLauncher {
 
         // Rewrite the bundle identifier and display names so macOS treats this clone
         // as a separate app with its own sandbox container.
+        if let writeError = writeIdentityToBundle(at: target, slot: slot) {
+            return .failed(writeError)
+        }
+
+        return .ready(target)
+    }
+
+    /// Renames a clone in-place — updates CFBundleName/CFBundleDisplayName in
+    /// the bundle's Info.plist and re-signs ad-hoc. The bundle identifier is
+    /// left alone so the sandbox container (and signed-in WeChat session) is
+    /// preserved. The change becomes visible in Cmd+Tab/Dock the next time
+    /// the clone is launched.
+    @discardableResult
+    func renameClone(slot: Int, newName: String?) -> String? {
+        setSlotName(slot: slot, name: newName)
+        guard cloneExists(slot: slot) else { return nil }
+        return writeIdentityToBundle(at: cloneURL(for: slot), slot: slot)
+    }
+
+    /// Deletes the on-disk clone bundle and recreates it from the current
+    /// WeChat.app. The sandbox container lives in a separate path keyed by
+    /// bundle ID, so the user's WeChat session survives a refresh.
+    func refreshClone(slot: Int) -> PrepareResult {
+        let target = cloneURL(for: slot)
+        if FileManager.default.fileExists(atPath: target.path) {
+            do {
+                try FileManager.default.removeItem(at: target)
+            } catch {
+                return .failed("Could not remove old clone: \(error.localizedDescription)")
+            }
+        }
+        return prepareClone(slot: slot)
+    }
+
+    /// Writes our identity (bundle ID + display name) into a clone bundle's
+    /// Info.plist, drops the now-invalid Tencent signature, and ad-hoc re-signs.
+    /// Called both during initial clone creation and on rename.
+    private func writeIdentityToBundle(at target: URL, slot: Int) -> String? {
         let plist = target.appendingPathComponent("Contents/Info.plist").path
         let bundleID = cloneBundleID(for: slot)
-        let displayName = "WeChat \(slot)"
+        let displayName = cloneDisplayName(slot: slot)
         let plistBuddy = "/usr/libexec/PlistBuddy"
 
         _ = run(plistBuddy, ["-c", "Set :CFBundleIdentifier \(bundleID)", plist])
         _ = run(plistBuddy, ["-c", "Set :CFBundleName \(displayName)", plist])
-        // Some apps don't have CFBundleDisplayName by default — fall back to Add.
+        // CFBundleDisplayName may be absent — Set will fail; Add as fallback.
         if run(plistBuddy, ["-c", "Set :CFBundleDisplayName \(displayName)", plist]) != nil {
             _ = run(plistBuddy, ["-c", "Add :CFBundleDisplayName string \(displayName)", plist])
         }
 
-        // Drop the original code signature — modifying Info.plist invalidates it anyway.
+        // Drop the original signature (Info.plist edit invalidates it anyway).
         let signatureDir = target.appendingPathComponent("Contents/_CodeSignature")
         try? FileManager.default.removeItem(at: signatureDir)
 
-        // Re-sign ad-hoc so macOS will let the modified bundle launch.
-        if let signError = run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", target.path]) {
-            // Not strictly fatal — try to launch anyway, but report.
+        if let signError = run("/usr/bin/codesign",
+                               ["--force", "--deep", "--sign", "-", target.path]) {
             NSLog("Ad-hoc sign warning for slot \(slot): \(signError)")
         }
-
-        // Strip the quarantine bit so Gatekeeper doesn't block first launch.
         _ = run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", target.path])
 
-        return .ready(target)
+        return nil
     }
 
     func resetAllClones() throws {

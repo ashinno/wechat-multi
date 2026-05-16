@@ -2,6 +2,8 @@
 
 > Run multiple WeChat accounts side by side on macOS — from a single menu bar icon.
 
+**English** | [简体中文](README.zh-CN.md)
+
 ![platform](https://img.shields.io/badge/platform-macOS%2012%2B-blue)
 ![swift](https://img.shields.io/badge/swift-5.7%2B-orange)
 ![license](https://img.shields.io/badge/license-MIT-green)
@@ -24,11 +26,14 @@ surviving restarts.
  ┌──────────────────────────────────────┐
  │ 2 WeChat instances running           │
  ├──────────────────────────────────────┤
+ │ ⚠️ 1 clone out of date               │
+ │ Refresh Outdated Clones…             │
+ ├──────────────────────────────────────┤
  │ Launch New Instance              ⌘N  │
  ├──────────────────────────────────────┤
  │ Running                              │
  │ Main account — PID 34810           › │
- │ Slot 1 — PID 40853                 › │
+ │ Work (Slot 1) — PID 40853          › │
  │ Quit All Instances               ⌘K  │
  ├──────────────────────────────────────┤
  │ Choose WeChat.app Location…          │
@@ -41,8 +46,13 @@ surviving restarts.
  └──────────────────────────────────────┘
 ```
 
-Each running-instance row expands to a submenu with **Bring to Front** and
-**Quit This Instance**.
+Each running-instance row expands to a submenu with **Bring to Front**,
+**Quit This Instance**, and **Rename…** (lets you name a clone "Work" or
+"Personal" — the name shows in Cmd+Tab and the Dock).
+
+The **⚠️ outdated clones** row only appears when WeChat has updated since
+your clones were last built; one click rebuilds them while preserving each
+clone's signed-in session.
 
 ## Download
 
@@ -55,10 +65,12 @@ click → Open the first time because it's ad-hoc signed.
 
 - 🍎 **Native menu bar app** — no Dock clutter, no Electron, ~190 KB binary
 - ⚡ **One click to launch** a new, isolated WeChat instance
+- 🏷️ **Per-slot custom names** ("Work", "Personal") — shown in Cmd+Tab and Dock
+- 🔄 **Auto-detects WeChat updates** and offers to refresh stale clones,
+  preserving each clone's signed-in session
 - 📋 **Lists running instances** with their PIDs and start times
 - 🪟 **Bring any instance to the front**, quit individual instances, or quit all
 - 🔍 **Auto-detects WeChat** in `/Applications`; falls back to a file picker
-- 🔄 **Reset All Clones** rebuilds them after a WeChat update
 - 🖥️ **Apple Silicon native**, ad-hoc signed, no third-party dependencies
 
 ## Requirements
@@ -99,6 +111,8 @@ open "dist/WeChat Multi.app"
 4. Each running instance shows up in the menu. Hover one to:
    - **Bring to Front** — focuses that specific WeChat window
    - **Quit This Instance** — sends SIGTERM to just that PID
+   - **Rename…** — name a clone "Work", "Personal", etc.; Cmd+Tab and the
+     Dock pick up the new name the next time you launch it
 5. **Quit All Instances** terminates every WeChat (clones and the original)
 
 The original `/Applications/WeChat.app` is left untouched. You can keep
@@ -107,12 +121,16 @@ launching it normally from the Dock or Spotlight; it shows up in the menu as
 
 ### After a WeChat update
 
-When the official WeChat updates itself, your clones are still the old
-version. Use **Reset All Clones** from the menu — it deletes the clone
-bundles and they get rebuilt fresh from the new `/Applications/WeChat.app`
-the next time you launch a new instance. Your per-account sandbox containers
-(saved logins, chat history) are kept because they live in
-`~/Library/Containers/com.wechatmulti.cloneN/`.
+When the official WeChat updates itself, your clones are still on the old
+version. The app detects this automatically the next time you open the menu
+and shows **⚠️ N clones out of date**; click **Refresh Outdated Clones…** to
+rebuild them from the new `/Applications/WeChat.app`.
+
+Per-account sandbox containers (saved logins, chat history) are preserved
+during refresh because they live in `~/Library/Containers/com.wechatmulti.cloneN/`,
+which is separate from the bundle being replaced. Custom slot names are
+preserved too. You will need to quit running instances that are being
+refreshed; the dialog asks for confirmation first.
 
 If you want a *full* reset including sandbox data:
 
@@ -131,7 +149,8 @@ For each slot *N*, the app:
    disk space until WeChat writes to the bundle)
 2. Rewrites `Contents/Info.plist`:
    - `CFBundleIdentifier` → `com.wechatmulti.cloneN`
-   - `CFBundleName` / `CFBundleDisplayName` → `WeChat N`
+   - `CFBundleName` / `CFBundleDisplayName` → your custom slot name, or
+     `WeChat N` as a fallback
 3. Deletes `Contents/_CodeSignature` (modifying Info.plist invalidates the
    original Tencent signature)
 4. `codesign --force --deep --sign - <clone>` (ad-hoc re-sign)
@@ -193,8 +212,8 @@ PRs welcome. A few directions if you're looking for ideas:
 - Universal binary build (currently arm64 only)
 - "Launch at login" toggle via `SMAppService`
 - A proper `.icns` icon and About panel artwork
-- Per-slot custom display names (e.g. "Work", "Personal")
 - Notification when a clone finishes preparing for the first time
+- Homebrew cask
 
 ## License
 
