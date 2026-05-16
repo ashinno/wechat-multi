@@ -7,7 +7,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var refreshTimer: Timer?
     private var isPreparing = false
 
-    private let idleSymbolName = "bubble.left.and.bubble.right.fill"
+    // Busy state still uses an SF Symbol since we don't have a "spinning"
+    // version of the Stack glyph; idle uses the programmatic template image
+    // matching the design's IconStackMenubar.
     private let busySymbolName = "arrow.triangle.2.circlepath"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -29,9 +31,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let alert = NSAlert()
         alert.messageText = "WeChat Multi is running"
         alert.informativeText = """
-        Look for “WC” in the right side of your menu bar (next to the clock and \
-        Control Center). Click it, then choose “Launch New Instance” to open a \
-        second WeChat.
+        Look for the small green-stacked-cards icon on the right side of your \
+        menu bar (next to the clock and Control Center). Click it, then choose \
+        “Launch New Instance” to open a second WeChat.
         """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Got it")
@@ -48,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func setupStatusBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        setStatusImage(named: idleSymbolName)
+        setIdleStatusIcon()
 
         let menu = NSMenu()
         menu.delegate = self
@@ -57,19 +59,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildMenu()
     }
 
-    private func setStatusImage(named symbolName: String) {
+    /// Idle state — the design's monochrome Stack glyph as a template image.
+    private func setIdleStatusIcon() {
         guard let button = statusItem.button else { return }
-        let image = NSImage(systemSymbolName: symbolName,
-                            accessibilityDescription: "WeChat Multi")
+        button.image = MenubarIcon.template(size: 18)
+        button.imagePosition = .imageOnly
+        button.title = ""
+        button.toolTip = "WeChat Multi — click to launch additional accounts"
+    }
+
+    /// Busy state — SF Symbol so the spinning arrow communicates "working".
+    private func setBusyStatusIcon() {
+        guard let button = statusItem.button else { return }
+        let image = NSImage(systemSymbolName: busySymbolName,
+                            accessibilityDescription: "Preparing instance")
         image?.isTemplate = true
         button.image = image
-        button.imagePosition = .imageLeading
-        // The actual instance count is filled in by rebuildMenu(); we set a
-        // placeholder here so the icon never appears empty.
-        if button.title.isEmpty {
-            button.title = " WC"
-        }
-        button.toolTip = "WeChat Multi — click to launch additional accounts"
+        button.imagePosition = .imageOnly
+        button.title = ""
     }
 
     private func startRefreshTimer() {
@@ -96,11 +103,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let installed = launcher.wechatAppPath != nil
         let instances = launcher.runningInstances()
 
-        // Update the menu bar title with the current instance count so the
-        // icon stays informative without opening the menu.
-        if let button = statusItem.button, !isPreparing {
-            button.title = instances.isEmpty ? " WC" : " WC \(instances.count)"
-        }
+        // The status bar shows the design's monochrome Stack glyph — no text.
+        // The dropdown's header line still reports the running count.
 
         // ── Header ──────────────────────────────────────────────────────────
         let headerTitle: String
@@ -256,7 +260,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func launchNewInstance() {
         guard !isPreparing else { return }
         isPreparing = true
-        setStatusImage(named: busySymbolName)
+        setBusyStatusIcon()
         rebuildMenu()
 
         // Determine the slot the launcher will pick so we can preview the
@@ -279,7 +283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async {
                 self.preparationPanel.hide()
                 self.isPreparing = false
-                self.setStatusImage(named: self.idleSymbolName)
+                self.setIdleStatusIcon()
                 switch result {
                 case .launched:
                     // Give the OS a beat to register the new process before refreshing.
@@ -444,7 +448,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         isPreparing = true
-        setStatusImage(named: busySymbolName)
+        setBusyStatusIcon()
         rebuildMenu()
         preparationPanel.showAfterDelay(title: "Refreshing \(stale.count) clone\(stale.count == 1 ? "" : "s")…")
 
@@ -478,7 +482,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async {
                 self.preparationPanel.hide()
                 self.isPreparing = false
-                self.setStatusImage(named: self.idleSymbolName)
+                self.setIdleStatusIcon()
                 if !failures.isEmpty {
                     self.showAlert(title: "Some Clones Could Not Be Refreshed",
                                    message: failures.joined(separator: "\n"))
@@ -499,7 +503,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         has its own sandbox container, WeChat's built-in singleton check is \
         bypassed and each instance has its own login state.
 
-        Version 1.2
+        Version 1.3
         """
         alert.alertStyle = .informational
         // Force the app-icon for the About panel. NSAlert normally inherits
