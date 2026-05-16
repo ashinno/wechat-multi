@@ -17,6 +17,40 @@ The result: you can sign in to as many accounts as you want — work and
 personal, two phone numbers, a burner — each in its own window, each
 surviving restarts.
 
+## What the menu looks like
+
+```
+ 💬 WC 2                                          ⏰ 9:41
+ ┌──────────────────────────────────────┐
+ │ 2 WeChat instances running           │
+ ├──────────────────────────────────────┤
+ │ Launch New Instance              ⌘N  │
+ ├──────────────────────────────────────┤
+ │ Running                              │
+ │ Main account — PID 34810           › │
+ │ Slot 1 — PID 40853                 › │
+ │ Quit All Instances               ⌘K  │
+ ├──────────────────────────────────────┤
+ │ Choose WeChat.app Location…          │
+ │   ↳ /Applications/WeChat.app         │
+ │ Open Clones Folder                   │
+ │ Reset All Clones (1)…                │
+ ├──────────────────────────────────────┤
+ │ About WeChat Multi                   │
+ │ Quit WeChat Multi                ⌘Q  │
+ └──────────────────────────────────────┘
+```
+
+Each running-instance row expands to a submenu with **Bring to Front** and
+**Quit This Instance**.
+
+## Download
+
+Don't want to compile? Grab the pre-built `.app` from
+[the latest release](https://github.com/ashinno/wechat-multi/releases/latest),
+drag it into `/Applications`, and double-click. macOS may ask you to right-
+click → Open the first time because it's ad-hoc signed.
+
 ## Features
 
 - 🍎 **Native menu bar app** — no Dock clutter, no Electron, ~190 KB binary
