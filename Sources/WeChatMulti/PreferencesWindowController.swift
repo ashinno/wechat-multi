@@ -9,7 +9,7 @@ final class PreferencesWindowController: NSWindowController {
         let window = NSWindow(contentViewController: hosting)
         window.title = "WeChat Multi — Preferences"
         window.styleMask = [.titled, .closable, .miniaturizable]
-        window.setContentSize(NSSize(width: 460, height: 380))
+        window.setContentSize(NSSize(width: 560, height: 380))
         window.isReleasedWhenClosed = false
         window.center()
         self.init(window: window)

@@ -1,13 +1,12 @@
 import SwiftUI
 import AppKit
 
-/// Popover content matching the Stack/Jade menubar dropdown in the design canvas
-/// (logo.jsx → MenubarTemplate). Header + account list + footer actions.
+/// Popover content matching the Stack/Jade menubar dropdown in the design canvas.
+/// Refined typography rhythm, animated hover states, status dots with inner
+/// highlight, and tighter footer treatment than the v1.4 first cut.
 struct MenuPanelView: View {
     @ObservedObject var state: AppState
 
-    // Brand tints — match the jade palette from the design.
-    private let activeTint = Color(red: 31/255, green: 197/255, blue: 107/255).opacity(0.18)
     private let panelWidth: CGFloat = 280
 
     var body: some View {
@@ -16,10 +15,11 @@ struct MenuPanelView: View {
             divider
             accountList
             if state.staleCount > 0 {
-                divider
                 stalePrompt
+                divider
+            } else {
+                divider
             }
-            divider
             footer
         }
         .padding(6)
@@ -34,15 +34,29 @@ struct MenuPanelView: View {
                 .renderingMode(.template)
                 .foregroundColor(.primary)
                 .frame(width: 18, height: 18)
-            Text("WeChat Multi")
-                .font(.system(size: 13, weight: .semibold))
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text("WeChat Multi")
+                    .font(.system(size: 13, weight: .semibold))
+                    .tracking(-0.1)
+            }
+
             Spacer()
+
+            // Account count in a refined pill instead of plain text — adds a
+            // beat of color that ties the popover to the brand without being
+            // loud. Jade tint on hover-ready states.
             Text(accountCountLabel)
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(Brand.jadeDeep)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 1.5)
+                .background(
+                    Capsule().fill(Brand.jade.opacity(0.16))
+                )
         }
         .padding(.horizontal, 10)
-        .padding(.top, 6)
+        .padding(.top, 7)
         .padding(.bottom, 8)
     }
 
@@ -51,23 +65,28 @@ struct MenuPanelView: View {
         return n == 1 ? "1 account" : "\(n) accounts"
     }
 
-    // MARK: - Account rows
+    // MARK: - Account list
 
     @ViewBuilder
     private var accountList: some View {
         if state.accounts.isEmpty {
             HStack {
                 Spacer()
-                Text("No accounts yet")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+                VStack(spacing: 4) {
+                    Image(systemName: "square.stack.3d.up.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.tertiary)
+                    Text("No accounts yet")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
             }
-            .padding(.vertical, 14)
+            .padding(.vertical, 16)
         } else {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 1) {
                 ForEach(state.accounts) { account in
-                    AccountRow(account: account, activeTint: activeTint) {
+                    AccountRow(account: account) {
                         state.handleRowClick(account)
                     } onQuit: {
                         state.quitAccount(account)
@@ -76,6 +95,7 @@ struct MenuPanelView: View {
                     }
                 }
             }
+            .padding(.vertical, 2)
         }
     }
 
@@ -84,18 +104,16 @@ struct MenuPanelView: View {
         state.onCloseMenu()
         // Defer so the popover dismisses before the modal alert appears —
         // otherwise the popover steals focus back when the alert closes.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
             let alert = NSAlert()
             alert.messageText = "Rename Slot \(account.id)"
-            alert.informativeText = "Cmd+Tab and the Dock will pick up the new name the next time you launch it."
+            alert.informativeText = "Cmd+Tab and the Dock will pick up the new name the next time you launch this instance."
             alert.alertStyle = .informational
             alert.addButton(withTitle: "Save")
             alert.addButton(withTitle: "Cancel")
 
             let currentName = state.launcher.slotName(slot: account.id)
-            if currentName != nil {
-                alert.addButton(withTitle: "Reset")
-            }
+            if currentName != nil { alert.addButton(withTitle: "Reset") }
 
             let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
             field.placeholderString = "WeChat \(account.id)"
@@ -114,25 +132,38 @@ struct MenuPanelView: View {
         }
     }
 
-    // MARK: - Stale clone prompt
+    // MARK: - Stale prompt
 
     private var stalePrompt: some View {
         Button {
             state.onCloseMenu()
             state.onRefreshStale()
         } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.orange)
-                    .frame(width: 14)
-                Text("\(state.staleCount) clone\(state.staleCount == 1 ? "" : "s") out of date — refresh")
-                    .font(.system(size: 12))
-                    .foregroundColor(.primary)
+            HStack(spacing: 9) {
+                ZStack {
+                    Circle()
+                        .fill(Color.orange.opacity(0.18))
+                        .frame(width: 18, height: 18)
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.orange)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("\(state.staleCount) clone\(state.staleCount == 1 ? "" : "s") out of date")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.primary)
+                    Text("Click to refresh from latest WeChat.app")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.orange)
             }
-            .contentShape(Rectangle())
             .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -140,23 +171,35 @@ struct MenuPanelView: View {
     // MARK: - Footer
 
     private var footer: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            FooterItem(title: "Add account…", shortcut: "⌘N", enabled: state.wechatInstalled) {
+        VStack(alignment: .leading, spacing: 1) {
+            FooterItem(icon: "plus.circle.fill",
+                       title: "Add account…",
+                       shortcut: "⌘N",
+                       tintIcon: true,
+                       enabled: state.wechatInstalled) {
                 state.onCloseMenu()
                 state.onLaunchNew()
             }
-            FooterItem(title: "Preferences…") {
+            FooterItem(icon: "slider.horizontal.3",
+                       title: "Preferences…") {
                 state.onCloseMenu()
                 state.onOpenPreferences()
             }
-            FooterItem(title: "Quit WeChat Multi", shortcut: "⌘Q") {
+            FooterItem(icon: "power",
+                       title: "Quit WeChat Multi",
+                       shortcut: "⌘Q") {
                 NSApp.terminate(nil)
             }
         }
+        .padding(.vertical, 2)
     }
 
     private var divider: some View {
-        Divider().padding(.vertical, 2)
+        Rectangle()
+            .fill(Color.primary.opacity(0.08))
+            .frame(height: 0.5)
+            .padding(.vertical, 4)
+            .padding(.horizontal, 4)
     }
 }
 
@@ -164,7 +207,6 @@ struct MenuPanelView: View {
 
 private struct AccountRow: View {
     let account: Account
-    let activeTint: Color
     let onTap: () -> Void
     let onQuit: () -> Void
     let onRename: () -> Void
@@ -175,29 +217,28 @@ private struct AccountRow: View {
         Button(action: onTap) {
             HStack(spacing: 10) {
                 statusDot
-                Text(account.displayName)
-                    .font(.system(size: 13))
-                    .foregroundColor(.primary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(account.displayName)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
                 Spacer(minLength: 8)
                 Text(account.subtitle)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(account.isRunning ? Brand.jadeDeep : Color.secondary)
                     .lineLimit(1)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .contentShape(Rectangle())
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isHovered ? activeTint : .clear)
-            )
+            .background(rowBackground)
         }
         .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
+        .onHover { hovering in
+            withAnimation(Motion.hover) { isHovered = hovering }
+        }
         .contextMenu {
-            // Right-click on a row: per-instance actions. Mirrors the v1.0–1.2
-            // submenu items so power users don't lose those affordances.
             if account.isRunning {
                 Button("Bring to Front", action: onTap)
                 Button("Quit This Instance", action: onQuit)
@@ -212,24 +253,74 @@ private struct AccountRow: View {
     }
 
     @ViewBuilder
-    private var statusDot: some View {
-        if account.isRunning {
-            Circle()
-                .fill(account.dotColor)
-                .frame(width: 9, height: 9)
+    private var rowBackground: some View {
+        if isHovered {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Brand.jade.opacity(0.18),
+                            Brand.jade.opacity(0.10)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(Brand.jade.opacity(0.18), lineWidth: 0.5)
+                )
         } else {
-            Circle()
-                .strokeBorder(Color.secondary.opacity(0.6), lineWidth: 1)
-                .frame(width: 9, height: 9)
+            Color.clear
         }
+    }
+
+    @ViewBuilder
+    private var statusDot: some View {
+        ZStack {
+            if account.isRunning {
+                // Outer glow ring — very subtle, telegraphs "alive"
+                Circle()
+                    .fill(account.dotColor.opacity(0.18))
+                    .frame(width: 14, height: 14)
+                // Filled dot with an inner highlight gradient for depth
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                account.dotColor,
+                                account.dotColor.opacity(0.78)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(width: 8, height: 8)
+                    .overlay(
+                        // Tiny white speckle at top-left for a glossy hint
+                        Circle()
+                            .fill(Color.white.opacity(0.45))
+                            .frame(width: 2, height: 2)
+                            .offset(x: -1.3, y: -1.3)
+                    )
+            } else {
+                Circle()
+                    .strokeBorder(Color.secondary.opacity(0.55), lineWidth: 1)
+                    .frame(width: 9, height: 9)
+            }
+        }
+        .frame(width: 14, height: 14)
+        .animation(Motion.state, value: account.isRunning)
     }
 }
 
 // MARK: - Footer item
 
 private struct FooterItem: View {
+    let icon: String
     let title: String
     var shortcut: String? = nil
+    var tintIcon: Bool = false
     var enabled: Bool = true
     let action: () -> Void
 
@@ -237,27 +328,40 @@ private struct FooterItem: View {
 
     var body: some View {
         Button(action: action) {
-            HStack {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .frame(width: 16)
+                    .foregroundStyle(iconStyle)
                 Text(title)
-                    .font(.system(size: 13))
-                    .foregroundColor(enabled ? .primary : .secondary)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(enabled ? .primary : .tertiary)
                 Spacer()
                 if let shortcut {
                     Text(shortcut)
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .opacity(isHovered && enabled ? 1 : 0.7)
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .padding(.vertical, 5)
             .contentShape(Rectangle())
             .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isHovered && enabled ? Color.primary.opacity(0.08) : .clear)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isHovered && enabled ? Brand.hoverTint : .clear)
             )
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .onHover { isHovered = $0 }
+        .onHover { hovering in
+            withAnimation(Motion.hover) { isHovered = hovering }
+        }
+    }
+
+    private var iconStyle: AnyShapeStyle {
+        if !enabled { return AnyShapeStyle(Color.secondary.opacity(0.5)) }
+        if tintIcon { return AnyShapeStyle(Brand.jade) }
+        return AnyShapeStyle(.secondary)
     }
 }
