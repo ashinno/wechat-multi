@@ -7,11 +7,47 @@ import AppKit
 struct PreferencesView: View {
     @ObservedObject var state: AppState
     @State private var sourceVersion: String = ""
+    @State private var launchAtLogin: Bool = LaunchAtLogin.isEnabled
+    @State private var launchAtLoginNeedsApproval: Bool = LaunchAtLogin.requiresApproval
 
     private var launcher: WeChatLauncher { state.launcher }
 
     var body: some View {
         Form {
+            Section {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Startup:")
+                        .frame(width: 110, alignment: .trailing)
+                        .foregroundColor(.secondary)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Toggle("Launch at login", isOn: $launchAtLogin)
+                            .toggleStyle(.switch)
+                            .onChange(of: launchAtLogin) { newValue in
+                                applyLaunchAtLogin(newValue)
+                            }
+                        if launchAtLoginNeedsApproval {
+                            HStack(spacing: 6) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundColor(.orange)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Needs approval in System Settings")
+                                        .font(.system(size: 11))
+                                    Button("Open Login Items…") { openLoginItemsSettings() }
+                                        .buttonStyle(.link)
+                                        .font(.system(size: 11))
+                                }
+                            }
+                        } else {
+                            Text("Start WeChat Multi automatically when you log in.")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+            }
+
+            Divider().padding(.vertical, 6)
+
             Section {
                 HStack(alignment: .firstTextBaseline) {
                     Text("WeChat.app:")
@@ -106,7 +142,37 @@ struct PreferencesView: View {
 
     private func refresh() {
         sourceVersion = launcher.wechatAppVersion() ?? ""
+        launchAtLogin = LaunchAtLogin.isEnabled
+        launchAtLoginNeedsApproval = LaunchAtLogin.requiresApproval
         state.refresh()
+    }
+
+    private func applyLaunchAtLogin(_ enabled: Bool) {
+        do {
+            try LaunchAtLogin.setEnabled(enabled)
+            // Re-read status after the call — the OS may need approval before
+            // it actually flips to .enabled, in which case the toggle should
+            // bounce back to off and we display the inline approval hint.
+            launchAtLoginNeedsApproval = LaunchAtLogin.requiresApproval
+            launchAtLogin = LaunchAtLogin.isEnabled
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = enabled
+                ? "Could Not Enable Launch at Login"
+                : "Could Not Disable Launch at Login"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            launchAtLogin = LaunchAtLogin.isEnabled  // revert
+        }
+    }
+
+    private func openLoginItemsSettings() {
+        // Deep-link to the Login Items pane of System Settings.
+        if let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     private func chooseWeChat() {

@@ -90,12 +90,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
         popover.delegate = self
         let host = NSHostingController(rootView: MenuPanelView(state: appState))
         // Pin the SwiftUI host's intrinsic size so NSPopover doesn't grow to
-        // an oversized "fitting size" during initial layout. macOS 13+ gets
-        // automatic intrinsic-size tracking; on macOS 12 we lock an initial
-        // frame and rely on layout to grow it.
-        if #available(macOS 13.0, *) {
-            host.sizingOptions = [.intrinsicContentSize]
-        }
+        // an oversized "fitting size" during initial layout (required for
+        // the popover to anchor flush against the menubar — see v1.4.1 fix).
+        host.sizingOptions = [.intrinsicContentSize]
         host.view.frame = NSRect(x: 0, y: 0, width: 280, height: 240)
         popover.contentSize = NSSize(width: 280, height: 240)
         popover.contentViewController = host
@@ -615,7 +612,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
         has its own sandbox container, WeChat's built-in singleton check is \
         bypassed and each instance has its own login state.
 
-        Version 1.4
+        Version 1.5
         """
         alert.alertStyle = .informational
         // Force the app-icon for the About panel. NSAlert normally inherits

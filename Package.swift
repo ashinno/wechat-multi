@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "WeChatMulti",
     platforms: [
-        .macOS(.v12)
+        .macOS(.v13)
     ],
     targets: [
         .executableTarget(

@@ -8,7 +8,7 @@
 
 [English](README.md) | **简体中文**
 
-![platform](https://img.shields.io/badge/platform-macOS%2012%2B-blue)
+![platform](https://img.shields.io/badge/platform-macOS%2013%2B-blue)
 ![swift](https://img.shields.io/badge/swift-5.7%2B-orange)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
@@ -62,6 +62,7 @@ Mac 版微信限制每次只能启动一个实例,第二次启动的进程会被
 - 🏷️ **自定义名称** 给每个实例起名(如"工作"、"小号"),Cmd+Tab
   和 Dock 都会显示新名字
 - 🎨 **彩色标记** 每个克隆在菜单里都有独立的颜色圆点,一眼就能区分
+- 🚀 **开机自启动** 偏好设置里勾选即可,基于 `SMAppService`,无需辅助应用
 - 📊 **首次克隆进度面板** 在拷贝 + 签名的几秒钟里显示当前步骤,
   不再让你怀疑应用是不是卡死了
 - 🔄 **微信升级检测** 自动发现已升级的 `/Applications/WeChat.app`,
@@ -73,7 +74,7 @@ Mac 版微信限制每次只能启动一个实例,第二次启动的进程会被
 
 ## 系统要求
 
-- macOS 12 Monterey 或更新版本
+- macOS 13 Ventura 或更新版本(自动启动依赖 `SMAppService`)
 - 已在 `/Applications/WeChat.app` 安装官方微信
 - Xcode Command Line Tools(`xcode-select --install`) —— 仅编译时需要
 

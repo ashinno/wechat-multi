@@ -8,7 +8,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-![platform](https://img.shields.io/badge/platform-macOS%2012%2B-blue)
+![platform](https://img.shields.io/badge/platform-macOS%2013%2B-blue)
 ![swift](https://img.shields.io/badge/swift-5.7%2B-orange)
 ![license](https://img.shields.io/badge/license-MIT-green)
 [![build](https://github.com/ashinno/wechat-multi/actions/workflows/build.yml/badge.svg)](https://github.com/ashinno/wechat-multi/actions/workflows/build.yml)
@@ -75,6 +75,8 @@ click → Open the first time because it's ad-hoc signed.
   tell instances apart at a glance
 - 📊 **Progress panel during first-time clone** so you know it isn't hung
   during the multi-second copy + sign step
+- 🚀 **Launch at login** toggle in Preferences (uses `SMAppService` — no
+  helper app, persists across reboots)
 - 🔄 **Auto-detects WeChat updates** and offers to refresh stale clones,
   preserving each clone's signed-in session
 - 📋 **Lists running instances** with their PIDs and start times
@@ -85,7 +87,7 @@ click → Open the first time because it's ad-hoc signed.
 
 ## Requirements
 
-- macOS 12 Monterey or later
+- macOS 13 Ventura or later (uses `SMAppService` for launch-at-login)
 - The official WeChat app installed at `/Applications/WeChat.app`
 - Xcode Command Line Tools (`xcode-select --install`) — only needed to build
 
@@ -219,11 +221,9 @@ defaults delete com.wechatmulti.app 2>/dev/null
 
 PRs welcome. A few directions if you're looking for ideas:
 
-- Universal binary build (currently arm64 only)
-- "Launch at login" toggle via `SMAppService`
-- A proper `.icns` icon and About panel artwork
 - Notification when a clone finishes preparing for the first time
 - Homebrew cask
+- Notarization (would remove the right-click-Open ceremony)
 
 ## License
 
