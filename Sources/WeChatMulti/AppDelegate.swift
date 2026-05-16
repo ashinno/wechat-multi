@@ -1,11 +1,22 @@
 import Cocoa
+import SwiftUI
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private let launcher = WeChatLauncher()
     private let preparationPanel = PreparationPanel()
     private var refreshTimer: Timer?
     private var isPreparing = false
+
+    // Popover (primary UI — matches the design's MenubarTemplate dropdown).
+    private lazy var appState = AppState(launcher: launcher)
+    private let popover = NSPopover()
+    private var preferencesController: PreferencesWindowController?
+
+    // Right-click fallback NSMenu (power-user actions: Rename, Refresh, etc.).
+    // Lives separately from statusItem.menu so it's only shown on demand and
+    // doesn't suppress the left-click popover handler.
+    private let fallbackMenu = NSMenu()
 
     // Busy state still uses an SF Symbol since we don't have a "spinning"
     // version of the Stack glyph; idle uses the programmatic template image
@@ -14,6 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusBar()
+        setupPopover()
+        setupAppStateCallbacks()
         startRefreshTimer()
         showFirstLaunchHintIfNeeded()
     }
@@ -33,7 +46,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.informativeText = """
         Look for the small green-stacked-cards icon on the right side of your \
         menu bar (next to the clock and Control Center). Click it, then choose \
-        “Launch New Instance” to open a second WeChat.
+        “Add account…” to open a second WeChat. Right-click the icon for \
+        advanced options (rename, refresh, preferences).
         """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Got it")
@@ -52,11 +66,84 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         setIdleStatusIcon()
 
-        let menu = NSMenu()
-        menu.delegate = self
-        menu.autoenablesItems = false
-        statusItem.menu = menu
+        // Don't assign statusItem.menu — that would suppress button.action.
+        // Instead we handle clicks ourselves and show the popover or the
+        // fallback menu depending on which mouse button was used.
+        if let button = statusItem.button {
+            button.target = self
+            button.action = #selector(handleStatusBarClick(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+
+        // Build the right-click fallback menu once; rebuildMenu updates its
+        // dynamic items each time before display.
+        fallbackMenu.delegate = self
+        fallbackMenu.autoenablesItems = false
         rebuildMenu()
+    }
+
+    // MARK: - Popover
+
+    private func setupPopover() {
+        popover.behavior = .transient
+        popover.animates = true
+        popover.delegate = self
+        popover.contentViewController = NSHostingController(rootView: MenuPanelView(state: appState))
+    }
+
+    private func setupAppStateCallbacks() {
+        appState.onLaunchNew = { [weak self] in self?.launchNewInstance() }
+        appState.onRefreshStale = { [weak self] in self?.refreshStaleAction() }
+        appState.onOpenPreferences = { [weak self] in self?.openPreferences() }
+        appState.onCloseMenu = { [weak self] in self?.popover.performClose(nil) }
+    }
+
+    @objc private func handleStatusBarClick(_ sender: NSStatusBarButton) {
+        let event = NSApp.currentEvent
+        let isRightClick = event?.type == .rightMouseUp
+                        || (event?.modifierFlags.contains(.control) ?? false)
+
+        if isRightClick {
+            showFallbackMenu()
+        } else {
+            togglePopover()
+        }
+    }
+
+    private func togglePopover() {
+        if popover.isShown {
+            popover.performClose(nil)
+        } else {
+            appState.refresh()
+            guard let button = statusItem.button else { return }
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
+            popover.contentViewController?.view.window?.becomeKey()
+        }
+    }
+
+    private func showFallbackMenu() {
+        // Briefly attach the fallback menu so the status item drops it down,
+        // then detach so the next left-click goes back through our handler.
+        rebuildMenu()
+        statusItem.menu = fallbackMenu
+        statusItem.button?.performClick(nil)
+        statusItem.menu = nil
+    }
+
+    // MARK: - NSPopoverDelegate
+
+    func popoverDidShow(_ notification: Notification) {
+        // Activate so SwiftUI text fields / hover work reliably.
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: - Preferences
+
+    private func openPreferences() {
+        if preferencesController == nil {
+            preferencesController = PreferencesWindowController(state: appState)
+        }
+        preferencesController?.showAndFocus()
     }
 
     /// Idle state — the design's monochrome Stack glyph as a template image.
@@ -81,7 +168,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func startRefreshTimer() {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            self?.rebuildMenu()
+            self?.appState.refresh()
+            // Only rebuild the fallback menu when it's actually about to show —
+            // menuNeedsUpdate handles that. No need to rebuild every 5s.
         }
     }
 
@@ -96,8 +185,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Menu
 
+    /// Called after any state-changing action (launch, quit, rename, refresh).
+    /// Updates both the SwiftUI popover (via appState) and the fallback menu.
+    private func refreshUI() {
+        appState.refresh()
+        rebuildMenu()
+    }
+
     private func rebuildMenu() {
-        guard let menu = statusItem.menu else { return }
+        let menu = fallbackMenu
         menu.removeAllItems()
 
         let installed = launcher.wechatAppPath != nil
@@ -288,15 +384,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 case .launched:
                     // Give the OS a beat to register the new process before refreshing.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                        self?.rebuildMenu()
+                        self?.refreshUI()
                     }
                 case .sourceMissing:
                     self.showAlert(title: "WeChat Not Found",
                                    message: "Install WeChat in /Applications or choose its location from the menu.")
-                    self.rebuildMenu()
+                    self.refreshUI()
                 case .failed(let reason):
                     self.showAlert(title: "Could Not Launch a New Instance", message: reason)
-                    self.rebuildMenu()
+                    self.refreshUI()
                 }
             }
         }
@@ -306,7 +402,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let pid = sender.representedObject as? Int32 else { return }
         launcher.quitInstance(pid: pid)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.rebuildMenu()
+            self?.refreshUI()
         }
     }
 
@@ -326,7 +422,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if alert.runModal() == .alertFirstButtonReturn {
             launcher.quitAll()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.rebuildMenu()
+                self?.refreshUI()
             }
         }
     }
@@ -346,7 +442,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                           FileManager.default.fileExists(atPath: "\(path)/Contents/MacOS/微信")
             if hasMain {
                 launcher.setCustomPath(path)
-                rebuildMenu()
+                refreshUI()
             } else {
                 showAlert(title: "Not a WeChat App",
                           message: "The selected bundle does not contain a WeChat executable.")
@@ -382,7 +478,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             } catch {
                 showAlert(title: "Reset Failed", message: error.localizedDescription)
             }
-            rebuildMenu()
+            refreshUI()
         }
     }
 
@@ -422,7 +518,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         default:
             return
         }
-        rebuildMenu()
+        refreshUI()
     }
 
     @objc private func refreshStaleAction() {
@@ -487,7 +583,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.showAlert(title: "Some Clones Could Not Be Refreshed",
                                    message: failures.joined(separator: "\n"))
                 }
-                self.rebuildMenu()
+                self.refreshUI()
             }
         }
     }
@@ -503,7 +599,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         has its own sandbox container, WeChat's built-in singleton check is \
         bypassed and each instance has its own login state.
 
-        Version 1.3
+        Version 1.4
         """
         alert.alertStyle = .informational
         // Force the app-icon for the About panel. NSAlert normally inherits

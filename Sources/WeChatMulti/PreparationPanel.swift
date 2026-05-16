@@ -19,7 +19,7 @@ final class PreparationPanel {
         let size = NSSize(width: 380, height: 130)
         panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.titled, .nonactivatingPanel, .hudWindow],
+            styleMask: [.titled, .nonactivatingPanel, .utilityWindow, .hudWindow],
             backing: .buffered,
             defer: false
         )
