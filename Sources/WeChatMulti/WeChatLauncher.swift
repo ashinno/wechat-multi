@@ -1,0 +1,293 @@
+import Foundation
+import AppKit
+
+/// Manages cloned WeChat.app bundles so multiple WeChat instances can run side by side.
+///
+/// WeChat on macOS enforces a singleton via its CFBundleIdentifier. Spawning the binary
+/// twice (with `open -n` or `nohup`) does not yield two windows — the second process
+/// exits as soon as it sees the existing one. The proven workaround is to clone
+/// `/Applications/WeChat.app` into uniquely-identified copies. Each clone gets its own
+/// bundle ID, which gives it its own sandbox container and bypasses the singleton check.
+final class WeChatLauncher {
+
+    // MARK: - Configuration
+
+    private let defaults = UserDefaults.standard
+    private let customPathKey = "WeChatAppPath"
+
+    private let defaultPaths = [
+        "/Applications/WeChat.app",
+        "/Applications/微信.app",
+        "\(NSHomeDirectory())/Applications/WeChat.app"
+    ]
+
+    /// Directory that holds the cloned bundles. Lives under `~/Applications/` so users
+    /// can find clones in Finder if they want to pin one to the Dock manually.
+    let cloneRoot: URL = {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Applications/WeChat Multi", isDirectory: true)
+    }()
+
+    var wechatAppPath: String? {
+        if let custom = defaults.string(forKey: customPathKey),
+           FileManager.default.fileExists(atPath: custom) {
+            return custom
+        }
+        return defaultPaths.first { FileManager.default.fileExists(atPath: $0) }
+    }
+
+    func setCustomPath(_ path: String) {
+        defaults.set(path, forKey: customPathKey)
+    }
+
+    func clearCustomPath() {
+        defaults.removeObject(forKey: customPathKey)
+    }
+
+    // MARK: - Clone management
+
+    enum PrepareResult {
+        case ready(URL)
+        case sourceMissing
+        case failed(String)
+    }
+
+    func cloneURL(for slot: Int) -> URL {
+        cloneRoot.appendingPathComponent("WeChat \(slot).app", isDirectory: true)
+    }
+
+    func cloneBundleID(for slot: Int) -> String {
+        "com.wechatmulti.clone\(slot)"
+    }
+
+    func cloneExists(slot: Int) -> Bool {
+        FileManager.default.fileExists(atPath: cloneURL(for: slot).path)
+    }
+
+    /// Materializes a clone for the given slot if it does not already exist.
+    /// Performs the bundle copy, bundle-ID rewrite, and ad-hoc re-sign.
+    func prepareClone(slot: Int) -> PrepareResult {
+        guard let source = wechatAppPath else { return .sourceMissing }
+        let target = cloneURL(for: slot)
+
+        if FileManager.default.fileExists(atPath: target.path) {
+            return .ready(target)
+        }
+
+        do {
+            try FileManager.default.createDirectory(at: cloneRoot,
+                                                    withIntermediateDirectories: true)
+        } catch {
+            return .failed("Could not create clones directory: \(error.localizedDescription)")
+        }
+
+        // APFS supports copy-on-write clones, so `cp -Rc` is nearly instant for the
+        // hundreds of MB that WeChat.app weighs in at.
+        if let copyError = run("/bin/cp", ["-Rc", source, target.path]) {
+            return .failed("Copying WeChat.app failed: \(copyError)")
+        }
+
+        // Rewrite the bundle identifier and display names so macOS treats this clone
+        // as a separate app with its own sandbox container.
+        let plist = target.appendingPathComponent("Contents/Info.plist").path
+        let bundleID = cloneBundleID(for: slot)
+        let displayName = "WeChat \(slot)"
+        let plistBuddy = "/usr/libexec/PlistBuddy"
+
+        _ = run(plistBuddy, ["-c", "Set :CFBundleIdentifier \(bundleID)", plist])
+        _ = run(plistBuddy, ["-c", "Set :CFBundleName \(displayName)", plist])
+        // Some apps don't have CFBundleDisplayName by default — fall back to Add.
+        if run(plistBuddy, ["-c", "Set :CFBundleDisplayName \(displayName)", plist]) != nil {
+            _ = run(plistBuddy, ["-c", "Add :CFBundleDisplayName string \(displayName)", plist])
+        }
+
+        // Drop the original code signature — modifying Info.plist invalidates it anyway.
+        let signatureDir = target.appendingPathComponent("Contents/_CodeSignature")
+        try? FileManager.default.removeItem(at: signatureDir)
+
+        // Re-sign ad-hoc so macOS will let the modified bundle launch.
+        if let signError = run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", target.path]) {
+            // Not strictly fatal — try to launch anyway, but report.
+            NSLog("Ad-hoc sign warning for slot \(slot): \(signError)")
+        }
+
+        // Strip the quarantine bit so Gatekeeper doesn't block first launch.
+        _ = run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", target.path])
+
+        return .ready(target)
+    }
+
+    func resetAllClones() throws {
+        if FileManager.default.fileExists(atPath: cloneRoot.path) {
+            try FileManager.default.removeItem(at: cloneRoot)
+        }
+    }
+
+    func existingCloneSlots() -> [Int] {
+        guard let entries = try? FileManager.default.contentsOfDirectory(at: cloneRoot,
+                                                                          includingPropertiesForKeys: nil) else {
+            return []
+        }
+        let regex = try? NSRegularExpression(pattern: #"^WeChat (\d+)\.app$"#)
+        var slots: [Int] = []
+        for url in entries {
+            let name = url.lastPathComponent
+            let range = NSRange(name.startIndex..., in: name)
+            if let match = regex?.firstMatch(in: name, range: range),
+               match.numberOfRanges == 2,
+               let slotRange = Range(match.range(at: 1), in: name),
+               let slot = Int(name[slotRange]) {
+                slots.append(slot)
+            }
+        }
+        return slots.sorted()
+    }
+
+    // MARK: - Launching
+
+    enum LaunchResult {
+        case launched(slot: Int)
+        case sourceMissing
+        case failed(String)
+    }
+
+    /// Picks the lowest free slot, prepares its clone, and launches it.
+    func launchNextAvailableInstance() -> LaunchResult {
+        let running = Set(runningInstances().map { $0.slot })
+        var slot = 1
+        while running.contains(slot) {
+            slot += 1
+        }
+        return launchSpecificInstance(slot: slot)
+    }
+
+    func launchSpecificInstance(slot: Int) -> LaunchResult {
+        switch prepareClone(slot: slot) {
+        case .sourceMissing:
+            return .sourceMissing
+        case .failed(let reason):
+            return .failed(reason)
+        case .ready(let url):
+            if let err = run("/usr/bin/open", ["-na", url.path]) {
+                return .failed("open failed: \(err)")
+            }
+            return .launched(slot: slot)
+        }
+    }
+
+    // MARK: - Process inspection
+
+    struct InstanceInfo {
+        let slot: Int          // 0 means the original /Applications/WeChat.app
+        let pid: Int32
+        let startTime: String
+        let bundlePath: String
+    }
+
+    /// Returns one entry per WeChat main process — the original /Applications/WeChat.app
+    /// and any running clones under `~/Applications/WeChat Multi/`.
+    func runningInstances() -> [InstanceInfo] {
+        let pipe = Pipe()
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/ps")
+        task.arguments = ["-axo", "pid=,lstart=,comm="]
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+
+        do {
+            try task.run()
+        } catch {
+            return []
+        }
+
+        // Read BEFORE waitUntilExit: ps output for a full system exceeds the
+        // pipe buffer (~16 KB), so the child would block on write and
+        // waitUntilExit would never return. Drain first, then wait.
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+        guard let output = String(data: data, encoding: .utf8) else { return [] }
+
+        let cloneRootPath = cloneRoot.path
+        var results: [InstanceInfo] = []
+
+        for line in output.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let parts = trimmed.split(separator: " ", omittingEmptySubsequences: true)
+            guard parts.count >= 7, let pid = Int32(parts[0]) else { continue }
+
+            let startTime = parts[1..<6].joined(separator: " ")
+            let command = parts[6..<parts.count].joined(separator: " ")
+
+            // Original WeChat main process
+            if command.hasSuffix("/WeChat.app/Contents/MacOS/WeChat") ||
+               command.hasSuffix("/微信.app/Contents/MacOS/WeChat") ||
+               command.hasSuffix("/微信.app/Contents/MacOS/微信") {
+                let bundle = command.replacingOccurrences(of: "/Contents/MacOS/WeChat", with: "")
+                                    .replacingOccurrences(of: "/Contents/MacOS/微信", with: "")
+
+                // Was it launched from our clone root?
+                if bundle.hasPrefix(cloneRootPath) {
+                    // Extract slot number from "WeChat <N>.app"
+                    let bundleName = (bundle as NSString).lastPathComponent
+                    let digits = bundleName.filter { $0.isNumber }
+                    let slot = Int(digits) ?? -1
+                    results.append(InstanceInfo(slot: slot, pid: pid,
+                                                 startTime: startTime, bundlePath: bundle))
+                } else {
+                    results.append(InstanceInfo(slot: 0, pid: pid,
+                                                 startTime: startTime, bundlePath: bundle))
+                }
+            }
+        }
+        return results.sorted { $0.slot < $1.slot }
+    }
+
+    func quitAll() {
+        _ = run("/usr/bin/killall", ["WeChat"])
+    }
+
+    func quitInstance(pid: Int32) {
+        kill(pid, SIGTERM)
+    }
+
+    func revealInstance(pid: Int32) {
+        let script = """
+        tell application "System Events"
+            set frontmost of (first process whose unix id is \(pid)) to true
+        end tell
+        """
+        _ = run("/usr/bin/osascript", ["-e", script])
+    }
+
+    // MARK: - Helpers
+
+    /// Runs a subprocess synchronously and returns an error description on non-zero exit,
+    /// or nil on success.
+    @discardableResult
+    private func run(_ launchPath: String, _ arguments: [String]) -> String? {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: launchPath)
+        task.arguments = arguments
+
+        let errPipe = Pipe()
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = errPipe
+
+        do {
+            try task.run()
+        } catch {
+            return error.localizedDescription
+        }
+
+        // Drain stderr before waitUntilExit to avoid pipe-buffer deadlock.
+        let data = errPipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+
+        if task.terminationStatus != 0 {
+            let msg = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "exit code \(task.terminationStatus)"
+            return msg.isEmpty ? "exit code \(task.terminationStatus)" : msg
+        }
+        return nil
+    }
+}

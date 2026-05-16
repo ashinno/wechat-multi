@@ -1,0 +1,24 @@
+# Swift / SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+*.xcodeproj
+*.xcworkspace
+
+# Build output
+dist/
+*.app/
+
+# macOS
+.DS_Store
+*.swp
+*.swo
+
+# Editors
+.vscode/
+.idea/
+*~
+
+# Logs
+*.log
+/tmp/wcm*.log
