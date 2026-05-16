@@ -88,7 +88,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
         popover.behavior = .transient
         popover.animates = true
         popover.delegate = self
-        popover.contentViewController = NSHostingController(rootView: MenuPanelView(state: appState))
+        let host = NSHostingController(rootView: MenuPanelView(state: appState))
+        // Pin the SwiftUI host's intrinsic size so NSPopover doesn't grow to
+        // an oversized "fitting size" during initial layout. macOS 13+ gets
+        // automatic intrinsic-size tracking; on macOS 12 we lock an initial
+        // frame and rely on layout to grow it.
+        if #available(macOS 13.0, *) {
+            host.sizingOptions = [.intrinsicContentSize]
+        }
+        host.view.frame = NSRect(x: 0, y: 0, width: 280, height: 240)
+        popover.contentSize = NSSize(width: 280, height: 240)
+        popover.contentViewController = host
     }
 
     private func setupAppStateCallbacks() {
@@ -116,8 +126,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
         } else {
             appState.refresh()
             guard let button = statusItem.button else { return }
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
-            popover.contentViewController?.view.window?.becomeKey()
+            // Anchor to the BOTTOM edge of the button via a 1pt-tall strip.
+            // Using full button.bounds + preferredEdge: .minY worked in tests
+            // but on some menubars left a visible gap; explicitly anchoring
+            // a thin rect at y=0 (window-coord bottom of button) parks the
+            // popover's arrow tip flush against the menu bar.
+            let anchor = NSRect(x: 0, y: 0, width: button.bounds.width, height: 1)
+            popover.show(relativeTo: anchor, of: button, preferredEdge: .minY)
         }
     }
 
@@ -132,10 +147,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
 
     // MARK: - NSPopoverDelegate
 
-    func popoverDidShow(_ notification: Notification) {
-        // Activate so SwiftUI text fields / hover work reliably.
-        NSApp.activate(ignoringOtherApps: true)
-    }
+    // Intentionally NOT calling NSApp.activate here — it can re-layout the
+    // popover's host window after positioning and produce a visible gap
+    // between the menu bar and the popover. SwiftUI hover/buttons work fine
+    // without it for transient popovers.
 
     // MARK: - Preferences
 
