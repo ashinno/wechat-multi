@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private lazy var appState = AppState(launcher: launcher)
     private let popover = NSPopover()
     private var preferencesController: PreferencesWindowController?
+    private var onboardingController: OnboardingWindowController?
 
     // Busy state uses an SF Symbol so the spinning arrow communicates "working";
     // idle uses the design's monochrome Stack glyph (MenubarIcon).
@@ -33,23 +34,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func showFirstLaunchHintIfNeeded() {
         let key = "DidShowFirstLaunchHint"
         guard !UserDefaults.standard.bool(forKey: key) else { return }
+        // Mark immediately so closing the window mid-flow still counts as shown.
         UserDefaults.standard.set(true, forKey: key)
 
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-
-        let alert = NSAlert()
-        alert.messageText = "WeChat Multi is running"
-        alert.informativeText = """
-        Look for the small green stacked-cards icon on the right side of your \
-        menu bar (next to the clock and Control Center). Click it to manage \
-        your WeChat accounts.
-        """
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "Got it")
-        alert.runModal()
-
-        NSApp.setActivationPolicy(.accessory)
+        onboardingController = OnboardingWindowController { [weak self] in
+            self?.onboardingController = nil
+            NSApp.setActivationPolicy(.accessory)
+        }
+        onboardingController?.showAndFocus()
     }
 
     // MARK: - Status bar
