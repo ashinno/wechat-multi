@@ -274,6 +274,58 @@ final class WeChatLauncher {
         }
     }
 
+    /// Delete a single clone bundle and (optionally) its sandbox container.
+    /// Refuses to delete a running clone — caller must quit it first.
+    ///
+    /// By default the sandbox container at
+    /// `~/Library/Containers/com.wechatmulti.cloneN/` is preserved, so if the
+    /// user later re-creates the same slot the WeChat session reattaches.
+    /// Pass `removeSandboxContainer: true` for a full reset that also wipes
+    /// the signed-in login data.
+    ///
+    /// Returns `nil` on success, an error description otherwise.
+    @discardableResult
+    func deleteClone(slot: Int, removeSandboxContainer: Bool = false) -> String? {
+        guard slot > 0 else {
+            return "The main account isn't a clone — it can't be deleted from here."
+        }
+
+        if runningInstances().contains(where: { $0.slot == slot }) {
+            return "Quit Slot \(slot) before deleting it."
+        }
+
+        let target = cloneURL(for: slot)
+        if FileManager.default.fileExists(atPath: target.path) {
+            do {
+                try FileManager.default.removeItem(at: target)
+            } catch {
+                return "Could not delete the bundle: \(error.localizedDescription)"
+            }
+        }
+
+        // Drop the user-assigned name so a future slot with the same number
+        // starts from the default "WeChat N" name (unless renamed again).
+        setSlotName(slot: slot, name: nil)
+
+        if removeSandboxContainer {
+            let container = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Containers/\(cloneBundleID(for: slot))")
+            try? FileManager.default.removeItem(at: container)
+        }
+
+        return nil
+    }
+
+    /// True if a sandbox container exists for this slot. Used by the delete
+    /// confirmation to decide whether to surface the "also reset login data"
+    /// checkbox or hide it (nothing to reset).
+    func sandboxContainerExists(slot: Int) -> Bool {
+        guard slot > 0 else { return false }
+        let container = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Containers/\(cloneBundleID(for: slot))")
+        return FileManager.default.fileExists(atPath: container.path)
+    }
+
     func existingCloneSlots() -> [Int] {
         guard let entries = try? FileManager.default.contentsOfDirectory(at: cloneRoot,
                                                                           includingPropertiesForKeys: nil) else {

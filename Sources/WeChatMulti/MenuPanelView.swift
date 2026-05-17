@@ -96,10 +96,55 @@ struct MenuPanelView: View {
                     } onQuitAll: {
                         state.onCloseMenu()
                         state.onQuitAllInstances()
+                    } onDelete: {
+                        promptDelete(for: account)
                     }
                 }
             }
             .padding(.vertical, 2)
+        }
+    }
+
+    private func promptDelete(for account: Account) {
+        guard account.id > 0 else { return }
+        state.onCloseMenu()
+        // Defer so the popover dismisses before the modal alert appears.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            let hasSandbox = state.launcher.sandboxContainerExists(slot: account.id)
+
+            let alert = NSAlert()
+            alert.messageText = "Delete \(account.displayName)?"
+            alert.informativeText = hasSandbox
+                ? "This removes the cloned WeChat bundle from ~/Applications/WeChat Multi/. Your signed-in session in the sandbox container is preserved by default — check the box below to fully reset this account."
+                : "This removes the cloned WeChat bundle from ~/Applications/WeChat Multi/. No sandbox container exists for this slot, so nothing else needs cleanup."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Delete")
+            alert.addButton(withTitle: "Cancel")
+
+            // Checkbox accessory: only show when there's something to reset.
+            var sandboxCheckbox: NSButton?
+            if hasSandbox {
+                let checkbox = NSButton(checkboxWithTitle: "Also delete signed-in session and chat history",
+                                        target: nil, action: nil)
+                checkbox.state = .off
+                checkbox.frame = NSRect(x: 0, y: 0, width: 320, height: 22)
+                alert.accessoryView = checkbox
+                sandboxCheckbox = checkbox
+            }
+
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+            let removeSandbox = sandboxCheckbox?.state == .on
+            if let err = state.launcher.deleteClone(slot: account.id,
+                                                    removeSandboxContainer: removeSandbox) {
+                let errAlert = NSAlert()
+                errAlert.messageText = "Could Not Delete"
+                errAlert.informativeText = err
+                errAlert.alertStyle = .warning
+                errAlert.addButton(withTitle: "OK")
+                errAlert.runModal()
+            }
+            state.refresh()
         }
     }
 
@@ -216,6 +261,7 @@ private struct AccountRow: View {
     let onQuit: () -> Void
     let onRename: () -> Void
     let onQuitAll: () -> Void
+    let onDelete: () -> Void
 
     @State private var isHovered = false
 
@@ -254,6 +300,12 @@ private struct AccountRow: View {
             if account.id > 0 {
                 Divider()
                 Button("Rename…", action: onRename)
+                // Only allow delete when stopped — running clones must be quit
+                // first (deleting a live bundle is unsafe). The Quit option
+                // above is the path for "quit then delete".
+                if !account.isRunning {
+                    Button("Delete Slot…", role: .destructive, action: onDelete)
+                }
             }
             if canQuitAll {
                 Divider()
