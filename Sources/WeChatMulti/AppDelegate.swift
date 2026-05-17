@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let popover = NSPopover()
     private var preferencesController: PreferencesWindowController?
     private var onboardingController: OnboardingWindowController?
+    private var aboutController: AboutWindowController?
 
     // Busy state uses an SF Symbol so the spinning arrow communicates "working";
     // idle uses the design's monochrome Stack glyph (MenubarIcon).
@@ -106,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         appState.onLaunchNew = { [weak self] in self?.launchNewInstance() }
         appState.onRefreshStale = { [weak self] in self?.refreshStaleAction() }
         appState.onOpenPreferences = { [weak self] in self?.openPreferences() }
+        appState.onOpenAbout = { [weak self] in self?.openAbout() }
         appState.onCloseMenu = { [weak self] in self?.popover.performClose(nil) }
         appState.onQuitAllInstances = { [weak self] in self?.quitAllAction() }
     }
@@ -127,6 +129,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             preferencesController = PreferencesWindowController(state: appState)
         }
         preferencesController?.showAndFocus()
+    }
+
+    private func openAbout() {
+        if aboutController == nil {
+            aboutController = AboutWindowController { [weak self] in
+                self?.aboutController = nil
+                // Only drop activation policy if no other window is up
+                if self?.preferencesController == nil && self?.onboardingController == nil {
+                    NSApp.setActivationPolicy(.accessory)
+                }
+            }
+        }
+        aboutController?.showAndFocus()
     }
 
     // MARK: - Actions

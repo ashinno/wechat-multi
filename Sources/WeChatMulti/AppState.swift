@@ -27,6 +27,7 @@ final class AppState: ObservableObject {
     var onLaunchNew: () -> Void = { }
     var onRefreshStale: () -> Void = { }
     var onOpenPreferences: () -> Void = { }
+    var onOpenAbout: () -> Void = { }
     var onCloseMenu: () -> Void = { }
     var onQuitAllInstances: () -> Void = { }
 

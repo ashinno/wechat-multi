@@ -234,6 +234,11 @@ struct MenuPanelView: View {
                 state.onCloseMenu()
                 state.onOpenPreferences()
             }
+            FooterItem(icon: "info.circle",
+                       title: "About WeChat Multi") {
+                state.onCloseMenu()
+                state.onOpenAbout()
+            }
             FooterItem(icon: "power",
                        title: "Quit WeChat Multi",
                        shortcut: "⌘Q") {
