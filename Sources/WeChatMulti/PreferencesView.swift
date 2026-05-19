@@ -17,31 +17,40 @@ struct PreferencesView: View {
     private let windowWidth: CGFloat = 560
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            hero
-                .opacity(hasMounted ? 1 : 0)
-                .offset(y: hasMounted ? 0 : 6)
-                .animation(Motion.entry.delay(0.02), value: hasMounted)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                hero
+                    .opacity(hasMounted ? 1 : 0)
+                    .offset(y: hasMounted ? 0 : 6)
+                    .animation(Motion.entry.delay(0.02), value: hasMounted)
 
-            startupCard
-                .opacity(hasMounted ? 1 : 0)
-                .offset(y: hasMounted ? 0 : 6)
-                .animation(Motion.entry.delay(0.06), value: hasMounted)
+                startupCard
+                    .opacity(hasMounted ? 1 : 0)
+                    .offset(y: hasMounted ? 0 : 6)
+                    .animation(Motion.entry.delay(0.06), value: hasMounted)
 
-            wechatSourceCard
-                .opacity(hasMounted ? 1 : 0)
-                .offset(y: hasMounted ? 0 : 6)
-                .animation(Motion.entry.delay(0.10), value: hasMounted)
+                wechatSourceCard
+                    .opacity(hasMounted ? 1 : 0)
+                    .offset(y: hasMounted ? 0 : 6)
+                    .animation(Motion.entry.delay(0.10), value: hasMounted)
 
-            clonesCard
-                .opacity(hasMounted ? 1 : 0)
-                .offset(y: hasMounted ? 0 : 6)
-                .animation(Motion.entry.delay(0.14), value: hasMounted)
+                clonesCard
+                    .opacity(hasMounted ? 1 : 0)
+                    .offset(y: hasMounted ? 0 : 6)
+                    .animation(Motion.entry.delay(0.14), value: hasMounted)
 
-            footer
-                .opacity(hasMounted ? 0.85 : 0)
-                .animation(Motion.entry.delay(0.18), value: hasMounted)
+                backupCard
+                    .opacity(hasMounted ? 1 : 0)
+                    .offset(y: hasMounted ? 0 : 6)
+                    .animation(Motion.entry.delay(0.18), value: hasMounted)
+
+                footer
+                    .opacity(hasMounted ? 0.85 : 0)
+                    .animation(Motion.entry.delay(0.22), value: hasMounted)
+            }
+            .padding(.bottom, 6)
         }
+        .scrollIndicators(.never)
         .padding(.horizontal, 26)
         .padding(.top, 24)
         .padding(.bottom, 22)
@@ -291,6 +300,31 @@ struct PreferencesView: View {
         }
     }
 
+    // MARK: - Backup
+
+    private var backupCard: some View {
+        SettingsCard {
+            SectionLabel(title: "Backup")
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Export your slot names, display order, WeChat.app path, and onboarding state as a JSON file. Import it on a new Mac to start from your current configuration.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text("Signed-in WeChat sessions live in macOS sandbox containers and aren't portable — you'll log back in on the new Mac.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 8) {
+                Button("Export Settings…") { exportSettings() }
+                Button("Import Settings…") { importSettings() }
+                Spacer()
+            }
+            .controlSize(.small)
+        }
+    }
+
     // MARK: - Footer
 
     private var footer: some View {
@@ -404,5 +438,68 @@ struct PreferencesView: View {
             err.runModal()
         }
         refresh()
+    }
+
+    // MARK: - Backup actions
+
+    private func exportSettings() {
+        let panel = NSSavePanel()
+        panel.title = "Export Settings"
+        panel.nameFieldStringValue = "WeChat Multi Settings.json"
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            let data = try launcher.exportSettingsData()
+            try data.write(to: url, options: .atomic)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Export Failed"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
+    }
+
+    private func importSettings() {
+        let panel = NSOpenPanel()
+        panel.title = "Import Settings"
+        panel.allowedContentTypes = [.json]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        // Confirmation — import overwrites the current preferences. Worth
+        // pausing before it happens because there's no Undo for UserDefaults.
+        let confirm = NSAlert()
+        confirm.messageText = "Replace current settings?"
+        confirm.informativeText = """
+        Importing \(url.lastPathComponent) will overwrite your slot names, \
+        display order, WeChat.app path, and onboarding state with the values \
+        from the file. Existing clone bundles and signed-in sessions are not \
+        affected.
+        """
+        confirm.alertStyle = .warning
+        confirm.addButton(withTitle: "Import")
+        confirm.addButton(withTitle: "Cancel")
+        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+
+        do {
+            let data = try Data(contentsOf: url)
+            try launcher.importSettings(from: data)
+            refresh()
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Import Failed"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
     }
 }

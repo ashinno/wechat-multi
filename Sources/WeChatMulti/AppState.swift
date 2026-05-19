@@ -18,6 +18,7 @@ struct Account: Identifiable, Equatable {
 final class AppState: ObservableObject {
     @Published private(set) var accounts: [Account] = []
     @Published private(set) var staleCount: Int = 0
+    @Published private(set) var healthIssues: [WeChatLauncher.HealthIssue] = []
     @Published private(set) var wechatInstalled: Bool = true
 
     let launcher: WeChatLauncher
@@ -26,6 +27,7 @@ final class AppState: ObservableObject {
     /// (the delegate manages the progress panel + busy-state UI).
     var onLaunchNew: () -> Void = { }
     var onRefreshStale: () -> Void = { }
+    var onRepairUnhealthy: () -> Void = { }
     var onOpenPreferences: () -> Void = { }
     var onOpenAbout: () -> Void = { }
     var onCloseMenu: () -> Void = { }
@@ -47,12 +49,12 @@ final class AppState: ObservableObject {
         let running = launcher.runningInstances()
         let runningSlots = Set(running.map(\.slot))
 
-        var next: [Account] = []
+        var unordered: [Account] = []
 
         // Slot 0 — the original /Applications/WeChat.app, only listed when
         // actually running (we don't manage it; we just acknowledge it).
         if let main = running.first(where: { $0.slot == 0 }) {
-            next.append(Account(
+            unordered.append(Account(
                 id: 0,
                 displayName: "Main account",
                 dotColor: Color(launcher.slotColor(slot: 0)),
@@ -62,14 +64,12 @@ final class AppState: ObservableObject {
             ))
         }
 
-        // All on-disk clone slots, sorted. Each row shows whether it's currently
-        // running. Non-running clones can be relaunched with one click (the
-        // bundle already exists, so prepareClone returns instantly).
+        // All on-disk clone slots. Each row shows whether it's currently running.
         for slot in launcher.existingCloneSlots() {
             let isRunning = runningSlots.contains(slot)
             let pid = running.first(where: { $0.slot == slot })?.pid
             let name = launcher.slotName(slot: slot) ?? "Slot \(slot)"
-            next.append(Account(
+            unordered.append(Account(
                 id: slot,
                 displayName: name,
                 dotColor: Color(launcher.slotColor(slot: slot)),
@@ -79,8 +79,56 @@ final class AppState: ObservableObject {
             ))
         }
 
+        // Apply the user's saved display order. Slots present in the order
+        // come first (in that order); anything new is appended at the end.
+        let savedOrder = launcher.slotDisplayOrder()
+        let bySlot = Dictionary(uniqueKeysWithValues: unordered.map { ($0.id, $0) })
+        var seen = Set<Int>()
+        var next: [Account] = []
+        for slotID in savedOrder {
+            if let acc = bySlot[slotID] {
+                next.append(acc)
+                seen.insert(slotID)
+            }
+        }
+        for acc in unordered where !seen.contains(acc.id) {
+            next.append(acc)
+        }
+
         if next != accounts {
             accounts = next
+        }
+    }
+
+    /// Reorders the user-defined display order: place `slot` immediately
+    /// before `targetSlot` (or at the end if `targetSlot` is nil). Slot
+    /// numbers don't change — they remain tied to their sandbox container.
+    func moveAccount(_ slot: Int, before targetSlot: Int?) {
+        guard slot != targetSlot else { return }
+        // Make sure the current display order is materialized in defaults,
+        // not just implicit ("everything in numerical order"). Otherwise the
+        // first move would re-order all entries that were never persisted.
+        var existing = launcher.slotDisplayOrder()
+        for acc in accounts where !existing.contains(acc.id) {
+            existing.append(acc.id)
+        }
+        launcher.setSlotDisplayOrder(existing)
+        launcher.moveSlot(slot, before: targetSlot)
+        refresh()
+    }
+
+    /// Kick off a health scan on a background queue. Updates `healthIssues`
+    /// on main. Cheap (a few process spawns) but not free — don't call from
+    /// the hot path.
+    func runHealthCheck() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            let issues = self.launcher.healthCheck()
+            DispatchQueue.main.async {
+                if issues != self.healthIssues {
+                    self.healthIssues = issues
+                }
+            }
         }
     }
 

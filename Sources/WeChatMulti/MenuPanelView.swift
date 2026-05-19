@@ -1,11 +1,31 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
+
+/// Transferable payload for drag-to-reorder. Wrapping in a struct lets us
+/// register a custom UTType-style identifier instead of conflicting with
+/// arbitrary text/int drops from outside the app.
+struct AccountDragID: Codable, Transferable {
+    let slot: Int
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .wechatMultiAccountID)
+    }
+}
+
+extension UTType {
+    static var wechatMultiAccountID: UTType {
+        UTType(exportedAs: "com.wechatmulti.account-id")
+    }
+}
 
 /// Popover content matching the Stack/Jade menubar dropdown in the design canvas.
 /// Refined typography rhythm, animated hover states, status dots with inner
 /// highlight, and tighter footer treatment than the v1.4 first cut.
 struct MenuPanelView: View {
     @ObservedObject var state: AppState
+
+    @State private var dropTargetSlot: Int? = nil
+    @State private var draggingSlot: Int? = nil
 
     private let panelWidth: CGFloat = 280
 
@@ -14,16 +34,18 @@ struct MenuPanelView: View {
             header
             divider
             accountList
+            if !state.healthIssues.isEmpty {
+                healthPrompt
+            }
             if state.staleCount > 0 {
                 stalePrompt
-                divider
-            } else {
-                divider
             }
+            divider
             footer
         }
         .padding(6)
         .frame(width: panelWidth)
+        .animation(Motion.entry, value: state.accounts.map(\.id))
     }
 
     // MARK: - Header
@@ -87,7 +109,9 @@ struct MenuPanelView: View {
             VStack(alignment: .leading, spacing: 1) {
                 ForEach(state.accounts) { account in
                     AccountRow(account: account,
-                               canQuitAll: state.hasRunningInstances) {
+                               canQuitAll: state.hasRunningInstances,
+                               isDropTarget: dropTargetSlot == account.id,
+                               isBeingDragged: draggingSlot == account.id) {
                         state.handleRowClick(account)
                     } onQuit: {
                         state.quitAccount(account)
@@ -99,7 +123,56 @@ struct MenuPanelView: View {
                     } onDelete: {
                         promptDelete(for: account)
                     }
+                    .draggable(AccountDragID(slot: account.id)) {
+                        // Custom drag preview — solid surface so the drag feels weighty
+                        AccountRow(account: account, canQuitAll: false,
+                                   isDropTarget: false, isBeingDragged: false,
+                                   onTap: {}, onQuit: {}, onRename: {},
+                                   onQuitAll: {}, onDelete: {})
+                            .frame(width: 250)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color(nsColor: .windowBackgroundColor))
+                            )
+                            .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
+                            .onAppear {
+                                withAnimation(Motion.hover) { draggingSlot = account.id }
+                            }
+                    }
+                    .dropDestination(for: AccountDragID.self) { items, _ in
+                        defer {
+                            withAnimation(Motion.hover) {
+                                dropTargetSlot = nil
+                                draggingSlot = nil
+                            }
+                        }
+                        guard let dragged = items.first, dragged.slot != account.id else { return false }
+                        state.moveAccount(dragged.slot, before: account.id)
+                        return true
+                    } isTargeted: { targeted in
+                        withAnimation(Motion.hover) {
+                            dropTargetSlot = targeted ? account.id : (dropTargetSlot == account.id ? nil : dropTargetSlot)
+                        }
+                    }
                 }
+
+                // End-of-list drop zone — lets users move a slot to the bottom
+                // by dragging past the last row. Invisible until something is
+                // actually being dragged over it.
+                Color.clear
+                    .frame(height: 10)
+                    .contentShape(Rectangle())
+                    .dropDestination(for: AccountDragID.self) { items, _ in
+                        defer {
+                            withAnimation(Motion.hover) {
+                                dropTargetSlot = nil
+                                draggingSlot = nil
+                            }
+                        }
+                        guard let dragged = items.first else { return false }
+                        state.moveAccount(dragged.slot, before: nil)
+                        return true
+                    } isTargeted: { _ in /* end-zone needs no highlight */ }
             }
             .padding(.vertical, 2)
         }
@@ -179,6 +252,43 @@ struct MenuPanelView: View {
             default: break
             }
         }
+    }
+
+    // MARK: - Health prompt
+
+    private var healthPrompt: some View {
+        Button {
+            state.onCloseMenu()
+            state.onRepairUnhealthy()
+        } label: {
+            HStack(spacing: 9) {
+                ZStack {
+                    Circle()
+                        .fill(Brand.badgeRed.opacity(0.18))
+                        .frame(width: 18, height: 18)
+                    Image(systemName: "wrench.adjustable.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Brand.badgeRed)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("\(state.healthIssues.count) clone\(state.healthIssues.count == 1 ? "" : "s") need repair")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.primary)
+                    Text("Signature or bundle integrity issues detected")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Image(systemName: "arrow.right.circle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Brand.badgeRed)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Stale prompt
@@ -262,6 +372,8 @@ struct MenuPanelView: View {
 private struct AccountRow: View {
     let account: Account
     let canQuitAll: Bool
+    var isDropTarget: Bool = false
+    var isBeingDragged: Bool = false
     let onTap: () -> Void
     let onQuit: () -> Void
     let onRename: () -> Void
@@ -271,6 +383,21 @@ private struct AccountRow: View {
     @State private var isHovered = false
 
     var body: some View {
+        // Jade hairline shown above the row when it's the active drop target.
+        // Sits in the small vertical gap between rows so it doesn't bump
+        // anything around as it appears.
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(Brand.jadeDeep)
+                .frame(height: isDropTarget ? 2 : 0)
+                .padding(.horizontal, 6)
+                .opacity(isDropTarget ? 1 : 0)
+            rowButton
+        }
+        .opacity(isBeingDragged ? 0.45 : 1)
+    }
+
+    private var rowButton: some View {
         Button(action: onTap) {
             HStack(spacing: 10) {
                 statusDot

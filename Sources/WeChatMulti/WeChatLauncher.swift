@@ -15,6 +15,7 @@ final class WeChatLauncher {
     private let defaults = UserDefaults.standard
     private let customPathKey = "WeChatAppPath"
     private let slotNamesKey = "SlotNames"
+    private let slotOrderKey = "SlotDisplayOrder"
 
     private let defaultPaths = [
         "/Applications/WeChat.app",
@@ -517,5 +518,164 @@ final class WeChatLauncher {
             return msg.isEmpty ? "exit code \(task.terminationStatus)" : msg
         }
         return nil
+    }
+
+    // MARK: - Slot display order (user-controlled, persisted)
+
+    /// User-defined display order — list of slot IDs in the order they should
+    /// appear in the popover. Slots not in this list are appended at the end
+    /// in numerical order; missing slots are filtered out automatically.
+    /// Slot 0 (main account) participates in ordering just like clones.
+    func slotDisplayOrder() -> [Int] {
+        defaults.array(forKey: slotOrderKey) as? [Int] ?? []
+    }
+
+    func setSlotDisplayOrder(_ order: [Int]) {
+        defaults.set(order, forKey: slotOrderKey)
+    }
+
+    /// Reorder: move `slot` to the position immediately before `targetSlot`.
+    /// If `targetSlot == nil`, appends to the end. No-op if `slot == targetSlot`.
+    func moveSlot(_ slot: Int, before targetSlot: Int?) {
+        guard slot != targetSlot else { return }
+        var order = slotDisplayOrder()
+        order.removeAll { $0 == slot }
+        if let target = targetSlot, let idx = order.firstIndex(of: target) {
+            order.insert(slot, at: idx)
+        } else {
+            order.append(slot)
+        }
+        setSlotDisplayOrder(order)
+    }
+
+    // MARK: - Health check
+
+    /// A single issue discovered by `healthCheck` — broken signature, bundle ID
+    /// drift, missing binary, etc. Each can be fixed by `refreshClone(slot:)`.
+    struct HealthIssue: Equatable {
+        let slot: Int
+        let summary: String
+    }
+
+    /// Walks every on-disk clone bundle and confirms it's still in a sane
+    /// state: Info.plist points at the right CFBundleIdentifier, the main
+    /// executable exists and is +x, and `codesign --verify` succeeds. Returns
+    /// the slots that have at least one problem.
+    ///
+    /// Synchronous — callers should run it on a background queue.
+    func healthCheck() -> [HealthIssue] {
+        var issues: [HealthIssue] = []
+        for slot in existingCloneSlots() {
+            let bundle = cloneURL(for: slot)
+
+            // 1. Binary exists and is executable
+            let binary = bundle.appendingPathComponent("Contents/MacOS/WeChat").path
+            if !FileManager.default.fileExists(atPath: binary) {
+                issues.append(HealthIssue(slot: slot,
+                                          summary: "Missing main executable"))
+                continue
+            }
+            if !FileManager.default.isExecutableFile(atPath: binary) {
+                issues.append(HealthIssue(slot: slot,
+                                          summary: "Main executable is not executable"))
+                continue
+            }
+
+            // 2. Bundle identifier matches what we expect for this slot
+            let plistPath = bundle.appendingPathComponent("Contents/Info.plist").path
+            let actualID = readPlistString(at: plistPath, key: "CFBundleIdentifier")
+            let expectedID = cloneBundleID(for: slot)
+            if actualID != expectedID {
+                issues.append(HealthIssue(
+                    slot: slot,
+                    summary: actualID == nil
+                        ? "Info.plist unreadable"
+                        : "Bundle identifier drifted (\(actualID!) ≠ \(expectedID))"
+                ))
+                continue
+            }
+
+            // 3. codesign --verify passes
+            let exit = runStatus("/usr/bin/codesign",
+                                 ["--verify", "--verbose=0", bundle.path])
+            if exit != 0 {
+                issues.append(HealthIssue(slot: slot,
+                                          summary: "Code signature failed verification"))
+            }
+        }
+        return issues
+    }
+
+    /// Like `run` but reports the raw termination status instead of an error
+    /// string. Used by health checks where we just want a pass/fail signal.
+    private func runStatus(_ launchPath: String, _ arguments: [String]) -> Int32 {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: launchPath)
+        task.arguments = arguments
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            task.waitUntilExit()
+            return task.terminationStatus
+        } catch {
+            return -1
+        }
+    }
+
+    // MARK: - Backup / restore
+
+    /// Codable settings payload — JSON-encoded as `WeChat Multi Settings.json`
+    /// from the Preferences window. Captures everything user-tunable so a new
+    /// Mac install can start from the previous machine's configuration.
+    ///
+    /// Slot avatar colors aren't included because they're deterministic from
+    /// slot number (no per-slot override yet). If we add custom colors later,
+    /// add them here and bump `version`.
+    struct BackupPayload: Codable {
+        let version: Int                       // schema version
+        let exportedAt: String                 // ISO-8601 timestamp
+        let appVersion: String                 // CFBundleShortVersionString
+        let slotNames: [String: String]        // slot index (as string) → name
+        let slotOrder: [Int]                   // display order
+        let wechatAppPath: String?             // nil = default auto-detection
+        let didShowFirstLaunchHint: Bool       // skip onboarding on restore
+
+        static let currentVersion = 1
+    }
+
+    func exportSettingsData() throws -> Data {
+        let slotNamesDict = defaults.dictionary(forKey: slotNamesKey) as? [String: String] ?? [:]
+        let payload = BackupPayload(
+            version: BackupPayload.currentVersion,
+            exportedAt: ISO8601DateFormatter().string(from: Date()),
+            appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?",
+            slotNames: slotNamesDict,
+            slotOrder: slotDisplayOrder(),
+            wechatAppPath: defaults.string(forKey: customPathKey),
+            didShowFirstLaunchHint: defaults.bool(forKey: "DidShowFirstLaunchHint")
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(payload)
+    }
+
+    /// Applies a settings JSON file. Bails on schema-version mismatch — we
+    /// could migrate forward but right now there's only v1 to worry about.
+    func importSettings(from data: Data) throws {
+        let payload = try JSONDecoder().decode(BackupPayload.self, from: data)
+        guard payload.version == BackupPayload.currentVersion else {
+            throw NSError(domain: "WeChatMulti.Backup", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Unsupported settings file (schema v\(payload.version), this app expects v\(BackupPayload.currentVersion))."
+            ])
+        }
+        defaults.set(payload.slotNames, forKey: slotNamesKey)
+        defaults.set(payload.slotOrder, forKey: slotOrderKey)
+        if let path = payload.wechatAppPath {
+            defaults.set(path, forKey: customPathKey)
+        } else {
+            defaults.removeObject(forKey: customPathKey)
+        }
+        defaults.set(payload.didShowFirstLaunchHint, forKey: "DidShowFirstLaunchHint")
     }
 }

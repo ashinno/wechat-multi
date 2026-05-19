@@ -85,8 +85,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func startRefreshTimer() {
+        // Account list refresh — cheap, every 5s
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             self?.appState.refresh()
+        }
+        // Initial health check 2s after launch so it doesn't compete with
+        // first-paint, and then every 5 minutes.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.appState.runHealthCheck()
+        }
+        Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            self?.appState.runHealthCheck()
         }
     }
 
@@ -106,6 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func setupAppStateCallbacks() {
         appState.onLaunchNew = { [weak self] in self?.launchNewInstance() }
         appState.onRefreshStale = { [weak self] in self?.refreshStaleAction() }
+        appState.onRepairUnhealthy = { [weak self] in self?.repairUnhealthyAction() }
         appState.onOpenPreferences = { [weak self] in self?.openPreferences() }
         appState.onOpenAbout = { [weak self] in self?.openAbout() }
         appState.onCloseMenu = { [weak self] in self?.popover.performClose(nil) }
@@ -264,6 +274,81 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                    message: failures.joined(separator: "\n"))
                 }
                 self.appState.refresh()
+                self.appState.runHealthCheck()
+            }
+        }
+    }
+
+    private func repairUnhealthyAction() {
+        let issues = appState.healthIssues
+        let slots = Array(Set(issues.map(\.slot))).sorted()
+        guard !slots.isEmpty else { return }
+
+        let running = Set(launcher.runningSlotsBlocking(slots))
+        let alert = NSAlert()
+        alert.messageText = "Repair \(slots.count) clone\(slots.count == 1 ? "" : "s")?"
+        var detail = """
+        Each unhealthy clone will be rebuilt from /Applications/WeChat.app. \
+        Signed-in WeChat sessions are preserved (the sandbox container is \
+        keyed by bundle ID, which we restore exactly).
+
+        Issues detected:
+        """
+        for issue in issues.prefix(6) {
+            let name = launcher.slotName(slot: issue.slot) ?? "Slot \(issue.slot)"
+            detail += "\n • \(name) — \(issue.summary)"
+        }
+        if issues.count > 6 { detail += "\n • …and \(issues.count - 6) more" }
+        if !running.isEmpty {
+            let list = running.sorted().map { "Slot \($0)" }.joined(separator: ", ")
+            detail += "\n\nThese are running and will be quit first: \(list)."
+        }
+        alert.informativeText = detail
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Repair")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        isPreparing = true
+        setBusyStatusIcon()
+        preparationPanel.showAfterDelay(title: "Repairing \(slots.count) clone\(slots.count == 1 ? "" : "s")…")
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+
+            for slot in running {
+                self.preparationPanel.updateStatus("Quitting Slot \(slot)…")
+                if let pid = self.launcher.runningInstances().first(where: { $0.slot == slot })?.pid {
+                    self.launcher.quitInstance(pid: pid)
+                }
+            }
+            usleep(700_000)
+
+            var failures: [String] = []
+            for (index, slot) in slots.enumerated() {
+                let name = self.launcher.slotName(slot: slot) ?? "Slot \(slot)"
+                self.preparationPanel.updateStatus("Rebuilding \(name) (\(index + 1) of \(slots.count))…")
+                switch self.launcher.refreshClone(slot: slot, progress: { stage in
+                    self.preparationPanel.updateStatus("\(name): \(stage)")
+                }) {
+                case .ready: break
+                case .sourceMissing:
+                    failures.append("Slot \(slot): WeChat.app missing")
+                case .failed(let reason):
+                    failures.append("Slot \(slot): \(reason)")
+                }
+            }
+
+            DispatchQueue.main.async {
+                self.preparationPanel.hide()
+                self.isPreparing = false
+                self.setIdleStatusIcon()
+                if !failures.isEmpty {
+                    self.showAlert(title: "Some Clones Could Not Be Repaired",
+                                   message: failures.joined(separator: "\n"))
+                }
+                self.appState.refresh()
+                self.appState.runHealthCheck()
             }
         }
     }
