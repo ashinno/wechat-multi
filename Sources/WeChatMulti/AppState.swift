@@ -20,6 +20,9 @@ final class AppState: ObservableObject {
     @Published private(set) var staleCount: Int = 0
     @Published private(set) var healthIssues: [WeChatLauncher.HealthIssue] = []
     @Published private(set) var wechatInstalled: Bool = true
+    /// Keyboard-focused slot ID, or nil when nothing is focused. Set when the
+    /// popover opens and updated by ↑/↓ keys.
+    @Published var focusedSlotID: Int? = nil
 
     let launcher: WeChatLauncher
 
@@ -32,6 +35,10 @@ final class AppState: ObservableObject {
     var onOpenAbout: () -> Void = { }
     var onCloseMenu: () -> Void = { }
     var onQuitAllInstances: () -> Void = { }
+    /// Bridge from the keyboard monitor (AppDelegate) back to MenuPanelView's
+    /// delete prompt — MenuPanelView sets this so the alert renders correctly
+    /// with the popover dismissal sequence it already handles for mouse.
+    var onRequestDelete: (Account) -> Void = { _ in }
 
     var hasRunningInstances: Bool {
         accounts.contains(where: { $0.isRunning })
@@ -115,6 +122,55 @@ final class AppState: ObservableObject {
         launcher.setSlotDisplayOrder(existing)
         launcher.moveSlot(slot, before: targetSlot)
         refresh()
+    }
+
+    // MARK: - Keyboard focus
+
+    /// Set focus to the first row, or clear it if the list is empty.
+    func focusFirst() {
+        focusedSlotID = accounts.first?.id
+    }
+
+    func clearFocus() {
+        focusedSlotID = nil
+    }
+
+    func focusNext() {
+        guard !accounts.isEmpty else { return }
+        if let current = focusedSlotID,
+           let idx = accounts.firstIndex(where: { $0.id == current }) {
+            focusedSlotID = accounts[min(idx + 1, accounts.count - 1)].id
+        } else {
+            focusFirst()
+        }
+    }
+
+    func focusPrevious() {
+        guard !accounts.isEmpty else { return }
+        if let current = focusedSlotID,
+           let idx = accounts.firstIndex(where: { $0.id == current }) {
+            focusedSlotID = accounts[max(idx - 1, 0)].id
+        } else {
+            focusedSlotID = accounts.last?.id
+        }
+    }
+
+    /// Trigger the focused row's primary action (bring-to-front if running,
+    /// otherwise launch). No-op if nothing is focused.
+    func activateFocused() {
+        guard let id = focusedSlotID,
+              let account = accounts.first(where: { $0.id == id }) else { return }
+        handleRowClick(account)
+    }
+
+    /// Trigger delete on the focused row, but only if it's a stopped clone
+    /// (slot > 0, not running). Silently no-ops otherwise so accidental key
+    /// presses don't surface confusing errors.
+    func deleteFocused() {
+        guard let id = focusedSlotID,
+              let account = accounts.first(where: { $0.id == id }),
+              !account.isRunning, account.id > 0 else { return }
+        onRequestDelete(account)
     }
 
     /// Kick off a health scan on a background queue. Updates `healthIssues`

@@ -165,6 +165,7 @@ struct PreferencesView: View {
                     .controlSize(.regular)
                     .labelsHidden()
                     .tint(Brand.jade)
+                    .help("When enabled, macOS launches WeChat Multi every time you log in")
                     .onChange(of: launchAtLogin) { newValue in
                         applyLaunchAtLogin(newValue)
                     }
@@ -173,6 +174,7 @@ struct PreferencesView: View {
                 Button("Open Login Items in System Settings") { openLoginItemsSettings() }
                     .buttonStyle(.link)
                     .font(.system(size: 11))
+                    .help("Jump to System Settings → General → Login Items to approve the entry")
             }
         }
     }
@@ -223,11 +225,13 @@ struct PreferencesView: View {
 
             HStack(spacing: 8) {
                 Button("Choose…") { chooseWeChat() }
+                    .help("Pick a different WeChat.app bundle to use as the source for new clones")
                 Button("Reset to Default") {
                     launcher.clearCustomPath()
                     refresh()
                 }
                 .disabled(UserDefaults.standard.string(forKey: "WeChatAppPath") == nil)
+                .help("Stop using the custom path and fall back to auto-detection")
                 Spacer()
             }
             .controlSize(.small)
@@ -268,21 +272,25 @@ struct PreferencesView: View {
 
             HStack(spacing: 8) {
                 Button("Open Folder") { openClonesFolder() }
+                    .help("Show ~/Applications/WeChat Multi/ in Finder")
                 if stale > 0 {
                     Button("Refresh Outdated…") {
                         NSApp.keyWindow?.close()
                         state.onRefreshStale()
                     }
+                    .help("Rebuild stale clones from the current WeChat.app — signed-in sessions preserved")
                 }
                 if state.hasRunningInstances {
                     Button("Quit All Running") {
                         NSApp.keyWindow?.close()
                         state.onQuitAllInstances()
                     }
+                    .help("Quit every running WeChat instance — unsent messages may be lost")
                 }
                 Spacer()
                 Button("Reset All…") { resetClones() }
                     .disabled(cloneCount == 0)
+                    .help("Delete every clone bundle. Sandbox containers are preserved unless you also clear them manually.")
             }
             .controlSize(.small)
         }
@@ -318,7 +326,9 @@ struct PreferencesView: View {
             }
             HStack(spacing: 8) {
                 Button("Export Settings…") { exportSettings() }
+                    .help("Save your slot names, order, and preferences to a JSON file")
                 Button("Import Settings…") { importSettings() }
+                    .help("Load a previously-exported JSON file. Asks for confirmation before overwriting current preferences.")
                 Spacer()
             }
             .controlSize(.small)

@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+import Combine
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
@@ -7,12 +8,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let preparationPanel = PreparationPanel()
     private var refreshTimer: Timer?
     private var isPreparing = false
+    private var cancellables = Set<AnyCancellable>()
+    private var keyMonitor: Any?
 
     private lazy var appState = AppState(launcher: launcher)
     private let popover = NSPopover()
     private var preferencesController: PreferencesWindowController?
     private var onboardingController: OnboardingWindowController?
     private var aboutController: AboutWindowController?
+    private var whatsNewController: WhatsNewWindowController?
 
     // Busy state uses an SF Symbol so the spinning arrow communicates "working";
     // idle uses the design's monochrome Stack glyph (MenubarIcon).
@@ -25,7 +29,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         setupPopover()
         setupAppStateCallbacks()
         startRefreshTimer()
+        observeAccountsForIconBadge()
         showFirstLaunchHintIfNeeded()
+        showWhatsNewIfNeeded()
+    }
+
+    /// Watches the accounts list so the menubar icon picks up the running
+    /// badge / drops it without waiting on the 5s refresh tick.
+    private func observeAccountsForIconBadge() {
+        appState.$accounts
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refreshStatusIcon() }
+            .store(in: &cancellables)
+    }
+
+    private func refreshStatusIcon() {
+        guard !isPreparing else { return }   // busy state has priority
+        setIdleStatusIcon()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -43,6 +63,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             NSApp.setActivationPolicy(.accessory)
         }
         onboardingController?.showAndFocus()
+    }
+
+    /// On the first launch after a version bump, surface the changelog window
+    /// so users don't have to visit GitHub to know what changed. Skipped on
+    /// the first-ever launch (onboarding handles that) and on downgrades.
+    private func showWhatsNewIfNeeded() {
+        let key = "LastSeenVersion"
+        let defaults = UserDefaults.standard
+        let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+        defer { defaults.set(current, forKey: key) }
+
+        guard let lastSeen = defaults.string(forKey: key) else {
+            // First-ever launch — onboarding covers introduction, skip changelog.
+            return
+        }
+        guard versionIsNewer(current, than: lastSeen) else { return }
+        guard defaults.bool(forKey: "DidShowFirstLaunchHint") else {
+            // User hasn't completed onboarding yet — don't pile a second
+            // window on top. Onboarding will set the flag; we'll catch this
+            // case on the next launch.
+            return
+        }
+
+        // Pick entries strictly newer than lastSeen, capped at 3 so the panel
+        // doesn't become a wall of text after multiple skipped versions.
+        let entries = Changelog.entries
+            .filter { versionIsNewer($0.version, than: lastSeen) }
+            .prefix(3)
+        guard !entries.isEmpty else { return }
+
+        // Show after a beat so the menubar/Combine wiring above finishes first
+        // and the popover icon is positioned correctly under the new window.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            guard let self else { return }
+            self.whatsNewController = WhatsNewWindowController(
+                entries: Array(entries)
+            ) { [weak self] in
+                self?.whatsNewController = nil
+                if self?.preferencesController == nil
+                    && self?.onboardingController == nil
+                    && self?.aboutController == nil {
+                    NSApp.setActivationPolicy(.accessory)
+                }
+            }
+            self.whatsNewController?.showAndFocus()
+        }
+    }
+
+    /// Lexicographic-by-component semver compare. Treats missing components
+    /// as 0 so "1.8" compares cleanly against "1.8.0".
+    private func versionIsNewer(_ a: String, than b: String) -> Bool {
+        let ax = a.split(separator: ".").compactMap { Int($0) }
+        let bx = b.split(separator: ".").compactMap { Int($0) }
+        for i in 0..<max(ax.count, bx.count) {
+            let lhs = i < ax.count ? ax[i] : 0
+            let rhs = i < bx.count ? bx[i] : 0
+            if lhs != rhs { return lhs > rhs }
+        }
+        return false
     }
 
     // MARK: - Status bar
@@ -64,10 +143,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func setIdleStatusIcon() {
         guard let button = statusItem.button else { return }
-        button.image = MenubarIcon.template(size: 18)
+        let hasRunning = appState.hasRunningInstances
+        button.image = hasRunning
+            ? MenubarIcon.withRunningBadge(size: 18)
+            : MenubarIcon.template(size: 18)
         button.imagePosition = .imageOnly
         button.title = ""
-        button.toolTip = "WeChat Multi — click to manage accounts"
+        if hasRunning {
+            let n = appState.accounts.filter(\.isRunning).count
+            button.toolTip = n == 1
+                ? "WeChat Multi — 1 instance running"
+                : "WeChat Multi — \(n) instances running"
+        } else {
+            button.toolTip = "WeChat Multi — click to manage accounts"
+        }
     }
 
     private func setBusyStatusIcon() {
@@ -127,8 +216,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             popover.performClose(nil)
         } else {
             appState.refresh()
+            appState.focusFirst()
             guard let button = statusItem.button else { return }
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+    }
+
+    // MARK: - NSPopoverDelegate (keyboard monitor lifecycle)
+
+    func popoverDidShow(_ notification: Notification) {
+        // Local monitor swallows ↑/↓/Return/Delete while the popover is open
+        // so AppState can drive selection. Any unhandled keys pass through.
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.popover.isShown else { return event }
+            return self.handleKeyEvent(event) ? nil : event
+        }
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
+        appState.clearFocus()
+    }
+
+    /// Returns true when the event was consumed (so NSEvent monitor returns
+    /// nil and the system doesn't beep). ↑/↓ move selection; Return triggers
+    /// the focused row; Delete (forward or backward) deletes the row if it's
+    /// an eligible stopped clone.
+    private func handleKeyEvent(_ event: NSEvent) -> Bool {
+        // Ignore modifier-laden shortcuts so ⌘N etc. still work normally.
+        if event.modifierFlags.intersection([.command, .option, .control]).isEmpty == false {
+            return false
+        }
+        switch event.keyCode {
+        case 125:               // ↓
+            appState.focusNext()
+            return true
+        case 126:               // ↑
+            appState.focusPrevious()
+            return true
+        case 36, 76:            // Return, Enter
+            appState.activateFocused()
+            return true
+        case 51, 117:           // Delete (backspace), Forward delete
+            appState.deleteFocused()
+            return true
+        default:
+            return false
         }
     }
 
@@ -169,6 +302,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let name = launcher.slotName(slot: previewSlot) ?? "Slot \(previewSlot)"
             preparationPanel.showAfterDelay(title: "Preparing \(name)…")
         }
+        let prepStart = Date()
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
@@ -181,9 +315,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 self.isPreparing = false
                 self.setIdleStatusIcon()
                 switch result {
-                case .launched:
+                case .launched(let slot):
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
                         self?.appState.refresh()
+                    }
+                    // If prep took long enough that the user might have alt-
+                    // tabbed away, fire a banner so they know it finished.
+                    let duration = Date().timeIntervalSince(prepStart)
+                    if duration > 1.5 {
+                        let name = self.launcher.slotName(slot: slot) ?? "Slot \(slot)"
+                        AppNotifications.send(
+                            title: "WeChat Multi",
+                            body: "\(name) is ready",
+                            identifier: "ready-\(slot)-\(Int(Date().timeIntervalSince1970))"
+                        )
                     }
                 case .sourceMissing:
                     self.showAlert(title: "WeChat Not Found",

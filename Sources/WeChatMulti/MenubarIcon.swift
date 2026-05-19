@@ -4,14 +4,20 @@ import Cocoa
 /// `design/WeChat Multi Logo.html` (`IconStackMenubar`): three offset rounded
 /// squares with progressive stroke opacity, plus a filled notification dot.
 ///
-/// Returned as a template image so macOS tints it correctly for the active
-/// menubar appearance (white in dark mode, black in light mode).
+/// Two modes:
+///   • `template()` — idle state, NSImage marked `.isTemplate = true` so
+///     macOS auto-tints it for the active menubar appearance.
+///   • `withRunningBadge()` — when an instance is running. Same glyph plus a
+///     tiny jade dot in the top-right corner. NOT a template (the badge must
+///     keep its color) — instead we draw the glyph in `NSColor.labelColor`
+///     which adapts to the active appearance on its own.
 enum MenubarIcon {
+
     static func template(size: CGFloat = 18) -> NSImage {
         let image = NSImage(size: NSSize(width: size, height: size),
                             flipped: false) { _ in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
-            draw(in: ctx, size: size)
+            drawGlyph(in: ctx, size: size, color: .black, runningBadge: false)
             return true
         }
         image.isTemplate = true
@@ -19,13 +25,29 @@ enum MenubarIcon {
         return image
     }
 
-    private static func draw(in ctx: CGContext, size s: CGFloat) {
-        // Layout matches IconStackMenubar in logo.jsx.
+    static func withRunningBadge(size: CGFloat = 18) -> NSImage {
+        let image = NSImage(size: NSSize(width: size, height: size),
+                            flipped: false) { _ in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            // labelColor reflects the menubar's effective appearance at draw
+            // time — white in dark menubars, black in light ones — so the
+            // glyph remains legible without us being marked as a template.
+            drawGlyph(in: ctx, size: size, color: NSColor.labelColor, runningBadge: true)
+            return true
+        }
+        image.accessibilityDescription = "WeChat Multi — instances running"
+        return image
+    }
+
+    // MARK: - Drawing
+
+    private static func drawGlyph(in ctx: CGContext,
+                                  size s: CGFloat,
+                                  color base: NSColor,
+                                  runningBadge: Bool) {
         let cardSide = s * 0.52
         let cardRadius = s * 0.13
-        let strokeW = s * 0.07  // logo.jsx uses 0.06; we add a hair so the
-                                // glyph reads at 16–22pt on dense menubars
-                                // without the three cards merging into a blob
+        let strokeW = s * 0.07
         let cards: [(svgX: CGFloat, svgY: CGFloat, opacity: CGFloat)] = [
             (s * 0.06, s * 0.08, 0.45),
             (s * 0.18, s * 0.20, 0.70),
@@ -37,24 +59,39 @@ enum MenubarIcon {
         ctx.setLineJoin(.round)
 
         for c in cards {
-            // Flip y from SVG (top-left origin) to AppKit (bottom-left origin).
             let rect = CGRect(x: c.svgX,
                               y: s - c.svgY - cardSide,
                               width: cardSide, height: cardSide)
             let path = CGPath(roundedRect: rect.insetBy(dx: strokeW * 0.5, dy: strokeW * 0.5),
                               cornerWidth: cardRadius, cornerHeight: cardRadius,
                               transform: nil)
-            ctx.setStrokeColor(NSColor.black.withAlphaComponent(c.opacity).cgColor)
+            ctx.setStrokeColor(base.withAlphaComponent(c.opacity).cgColor)
             ctx.addPath(path)
             ctx.strokePath()
         }
 
-        // Notification badge: filled disc at top-right.
+        // Notification badge at the top-right of the glyph. In template mode
+        // it gets tinted with the rest of the icon; in running-badge mode we
+        // override with jade so the running state pops.
         let badgeR = s * 0.10
         let badgeCX = s * 0.86
         let badgeCY = s - s * 0.18
-        ctx.setFillColor(NSColor.black.cgColor)
+        let badgeColor: NSColor = runningBadge
+            ? NSColor(srgbRed: 0x07/255.0, green: 0xA0/255.0, blue: 0x50/255.0, alpha: 1.0)
+            : base
+        ctx.setFillColor(badgeColor.cgColor)
         ctx.fillEllipse(in: CGRect(x: badgeCX - badgeR, y: badgeCY - badgeR,
                                    width: badgeR * 2, height: badgeR * 2))
+
+        // Subtle outer halo around the jade badge when running — sells the
+        // "active" reading at 18pt without bumping the badge size.
+        if runningBadge {
+            ctx.setStrokeColor(badgeColor.withAlphaComponent(0.35).cgColor)
+            ctx.setLineWidth(s * 0.04)
+            ctx.strokeEllipse(in: CGRect(x: badgeCX - badgeR - s * 0.04,
+                                         y: badgeCY - badgeR - s * 0.04,
+                                         width: (badgeR + s * 0.04) * 2,
+                                         height: (badgeR + s * 0.04) * 2))
+        }
     }
 }

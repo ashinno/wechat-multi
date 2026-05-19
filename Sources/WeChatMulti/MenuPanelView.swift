@@ -26,8 +26,24 @@ struct MenuPanelView: View {
 
     @State private var dropTargetSlot: Int? = nil
     @State private var draggingSlot: Int? = nil
+    @State private var deleteBridgeInstalled = false
 
     private let panelWidth: CGFloat = 280
+
+    private func installDeleteBridge() {
+        guard !deleteBridgeInstalled else { return }
+        deleteBridgeInstalled = true
+        // Keyboard Delete pressed → AppState calls this back with the focused
+        // account; route it through the same modal prompt the right-click
+        // path uses. Weak capture of state to avoid a retain cycle (the
+        // closure is stored on state itself).
+        state.onRequestDelete = { [weak state] account in
+            guard let state else { return }
+            DispatchQueue.main.async {
+                MenuPanelDeletePrompt.show(for: account, state: state)
+            }
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -46,6 +62,7 @@ struct MenuPanelView: View {
         .padding(6)
         .frame(width: panelWidth)
         .animation(Motion.entry, value: state.accounts.map(\.id))
+        .onAppear { installDeleteBridge() }
     }
 
     // MARK: - Header
@@ -111,7 +128,8 @@ struct MenuPanelView: View {
                     AccountRow(account: account,
                                canQuitAll: state.hasRunningInstances,
                                isDropTarget: dropTargetSlot == account.id,
-                               isBeingDragged: draggingSlot == account.id) {
+                               isBeingDragged: draggingSlot == account.id,
+                               isKeyboardFocused: state.focusedSlotID == account.id) {
                         state.handleRowClick(account)
                     } onQuit: {
                         state.quitAccount(account)
@@ -179,46 +197,7 @@ struct MenuPanelView: View {
     }
 
     private func promptDelete(for account: Account) {
-        guard account.id > 0 else { return }
-        state.onCloseMenu()
-        // Defer so the popover dismisses before the modal alert appears.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            let hasSandbox = state.launcher.sandboxContainerExists(slot: account.id)
-
-            let alert = NSAlert()
-            alert.messageText = "Delete \(account.displayName)?"
-            alert.informativeText = hasSandbox
-                ? "This removes the cloned WeChat bundle from ~/Applications/WeChat Multi/. Your signed-in session in the sandbox container is preserved by default — check the box below to fully reset this account."
-                : "This removes the cloned WeChat bundle from ~/Applications/WeChat Multi/. No sandbox container exists for this slot, so nothing else needs cleanup."
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "Delete")
-            alert.addButton(withTitle: "Cancel")
-
-            // Checkbox accessory: only show when there's something to reset.
-            var sandboxCheckbox: NSButton?
-            if hasSandbox {
-                let checkbox = NSButton(checkboxWithTitle: "Also delete signed-in session and chat history",
-                                        target: nil, action: nil)
-                checkbox.state = .off
-                checkbox.frame = NSRect(x: 0, y: 0, width: 320, height: 22)
-                alert.accessoryView = checkbox
-                sandboxCheckbox = checkbox
-            }
-
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-
-            let removeSandbox = sandboxCheckbox?.state == .on
-            if let err = state.launcher.deleteClone(slot: account.id,
-                                                    removeSandboxContainer: removeSandbox) {
-                let errAlert = NSAlert()
-                errAlert.messageText = "Could Not Delete"
-                errAlert.informativeText = err
-                errAlert.alertStyle = .warning
-                errAlert.addButton(withTitle: "OK")
-                errAlert.runModal()
-            }
-            state.refresh()
-        }
+        MenuPanelDeletePrompt.show(for: account, state: state)
     }
 
     private func promptRename(for account: Account) {
@@ -289,6 +268,7 @@ struct MenuPanelView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help("Health check found signature or bundle integrity issues. Click to rebuild each affected clone from /Applications/WeChat.app — signed-in sessions are preserved.")
     }
 
     // MARK: - Stale prompt
@@ -325,6 +305,7 @@ struct MenuPanelView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help("WeChat.app has updated since these clones were created. Click to rebuild them while preserving each clone's signed-in session.")
     }
 
     // MARK: - Footer
@@ -335,23 +316,29 @@ struct MenuPanelView: View {
                        title: "Add account…",
                        shortcut: "⌘N",
                        tintIcon: true,
+                       tooltip: state.wechatInstalled
+                            ? "Launch a new isolated WeChat instance with its own login"
+                            : "Install WeChat first, then come back",
                        enabled: state.wechatInstalled) {
                 state.onCloseMenu()
                 state.onLaunchNew()
             }
             FooterItem(icon: "slider.horizontal.3",
-                       title: "Preferences…") {
+                       title: "Preferences…",
+                       tooltip: "WeChat path, clones, launch-at-login, backup, etc.") {
                 state.onCloseMenu()
                 state.onOpenPreferences()
             }
             FooterItem(icon: "info.circle",
-                       title: "About WeChat Multi") {
+                       title: "About WeChat Multi",
+                       tooltip: "Version, credits, license, and links") {
                 state.onCloseMenu()
                 state.onOpenAbout()
             }
             FooterItem(icon: "power",
                        title: "Quit WeChat Multi",
-                       shortcut: "⌘Q") {
+                       shortcut: "⌘Q",
+                       tooltip: "Quit this menubar app — does not close running WeChat windows") {
                 NSApp.terminate(nil)
             }
         }
@@ -374,6 +361,7 @@ private struct AccountRow: View {
     let canQuitAll: Bool
     var isDropTarget: Bool = false
     var isBeingDragged: Bool = false
+    var isKeyboardFocused: Bool = false
     let onTap: () -> Void
     let onQuit: () -> Void
     let onRename: () -> Void
@@ -395,6 +383,9 @@ private struct AccountRow: View {
             rowButton
         }
         .opacity(isBeingDragged ? 0.45 : 1)
+        .help(account.isRunning
+              ? "\(account.displayName) is running — click to bring its window to the front"
+              : "\(account.displayName) is stopped — click to launch this slot")
     }
 
     private var rowButton: some View {
@@ -448,13 +439,14 @@ private struct AccountRow: View {
 
     @ViewBuilder
     private var rowBackground: some View {
-        if isHovered {
+        let active = isHovered || isKeyboardFocused
+        if active {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(
                     LinearGradient(
                         colors: [
-                            Brand.jade.opacity(0.18),
-                            Brand.jade.opacity(0.10)
+                            Brand.jade.opacity(isKeyboardFocused ? 0.24 : 0.18),
+                            Brand.jade.opacity(isKeyboardFocused ? 0.14 : 0.10)
                         ],
                         startPoint: .leading,
                         endPoint: .trailing
@@ -462,7 +454,8 @@ private struct AccountRow: View {
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(Brand.jade.opacity(0.18), lineWidth: 0.5)
+                        .strokeBorder(Brand.jade.opacity(isKeyboardFocused ? 0.36 : 0.18),
+                                      lineWidth: isKeyboardFocused ? 1 : 0.5)
                 )
         } else {
             Color.clear
@@ -515,6 +508,7 @@ private struct FooterItem: View {
     let title: String
     var shortcut: String? = nil
     var tintIcon: Bool = false
+    var tooltip: String? = nil
     var enabled: Bool = true
     let action: () -> Void
 
@@ -551,11 +545,64 @@ private struct FooterItem: View {
         .onHover { hovering in
             withAnimation(Motion.hover) { isHovered = hovering }
         }
+        .help(tooltip ?? title)
     }
 
     private var iconStyle: AnyShapeStyle {
         if !enabled { return AnyShapeStyle(Color.secondary.opacity(0.5)) }
         if tintIcon { return AnyShapeStyle(Brand.jade) }
         return AnyShapeStyle(.secondary)
+    }
+}
+
+// MARK: - Delete prompt helper
+
+/// Confirmation flow for "Delete Slot…". Lives outside MenuPanelView as a
+/// static helper so it can be invoked from both the row's mouse context
+/// menu and the keyboard Delete handler bridged through AppState.
+enum MenuPanelDeletePrompt {
+    static func show(for account: Account, state: AppState) {
+        guard account.id > 0 else { return }
+        state.onCloseMenu()
+        // Defer so the popover dismisses before the modal alert appears —
+        // otherwise the popover steals focus back when the alert closes.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            let hasSandbox = state.launcher.sandboxContainerExists(slot: account.id)
+
+            let alert = NSAlert()
+            alert.messageText = "Delete \(account.displayName)?"
+            alert.informativeText = hasSandbox
+                ? "This removes the cloned WeChat bundle from ~/Applications/WeChat Multi/. Your signed-in session in the sandbox container is preserved by default — check the box below to fully reset this account."
+                : "This removes the cloned WeChat bundle from ~/Applications/WeChat Multi/. No sandbox container exists for this slot, so nothing else needs cleanup."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Delete")
+            alert.addButton(withTitle: "Cancel")
+
+            var sandboxCheckbox: NSButton?
+            if hasSandbox {
+                let checkbox = NSButton(
+                    checkboxWithTitle: "Also delete signed-in session and chat history",
+                    target: nil, action: nil
+                )
+                checkbox.state = .off
+                checkbox.frame = NSRect(x: 0, y: 0, width: 320, height: 22)
+                alert.accessoryView = checkbox
+                sandboxCheckbox = checkbox
+            }
+
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+            let removeSandbox = sandboxCheckbox?.state == .on
+            if let err = state.launcher.deleteClone(slot: account.id,
+                                                    removeSandboxContainer: removeSandbox) {
+                let errAlert = NSAlert()
+                errAlert.messageText = "Could Not Delete"
+                errAlert.informativeText = err
+                errAlert.alertStyle = .warning
+                errAlert.addButton(withTitle: "OK")
+                errAlert.runModal()
+            }
+            state.refresh()
+        }
     }
 }

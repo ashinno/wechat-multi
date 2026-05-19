@@ -178,34 +178,37 @@ private struct AboutLink: View {
     @State private var hovered = false
 
     var body: some View {
-        Button(action: openURL) {
-            HStack(spacing: 11) {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Brand.jade)
-                    .frame(width: 18, alignment: .center)
-                Text(label)
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(.primary)
-                Spacer()
-                Image(systemName: "arrow.up.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .opacity(hovered ? 1 : 0.35)
-                    .offset(x: hovered ? 2 : 0)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .contentShape(Rectangle())
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(hovered ? Brand.jade.opacity(0.12) : .clear)
-            )
-        }
+        Button(action: openURL) { rowBody }
         .buttonStyle(.plain)
         .onHover { hovering in
             withAnimation(Motion.hover) { hovered = hovering }
         }
+        .help("Open \(url) in your browser")
+    }
+
+    private var rowBody: some View {
+        HStack(spacing: 11) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Brand.jade)
+                .frame(width: 18, alignment: .center)
+            Text(label)
+                .font(.system(size: 12.5))
+                .foregroundStyle(.primary)
+            Spacer()
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .opacity(hovered ? 1 : 0.35)
+                .offset(x: hovered ? 2 : 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(hovered ? Brand.jade.opacity(0.12) : .clear)
+        )
     }
 
     private func openURL() {
