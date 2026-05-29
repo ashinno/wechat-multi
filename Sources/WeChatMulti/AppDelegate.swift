@@ -1,6 +1,7 @@
 import Cocoa
 import SwiftUI
 import Combine
+import WeChatMultiCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
@@ -53,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func showFirstLaunchHintIfNeeded() {
-        let key = "DidShowFirstLaunchHint"
+        let key = DefaultsKey.didShowOnboarding
         guard !UserDefaults.standard.bool(forKey: key) else { return }
         // Mark immediately so closing the window mid-flow still counts as shown.
         UserDefaults.standard.set(true, forKey: key)
@@ -69,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// so users don't have to visit GitHub to know what changed. Skipped on
     /// the first-ever launch (onboarding handles that) and on downgrades.
     private func showWhatsNewIfNeeded() {
-        let key = "LastSeenVersion"
+        let key = DefaultsKey.lastSeenVersion
         let defaults = UserDefaults.standard
         let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
         defer { defaults.set(current, forKey: key) }
@@ -78,8 +79,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // First-ever launch — onboarding covers introduction, skip changelog.
             return
         }
-        guard versionIsNewer(current, than: lastSeen) else { return }
-        guard defaults.bool(forKey: "DidShowFirstLaunchHint") else {
+        guard SemVer.isNewer(current, than: lastSeen) else { return }
+        guard defaults.bool(forKey: DefaultsKey.didShowOnboarding) else {
             // User hasn't completed onboarding yet — don't pile a second
             // window on top. Onboarding will set the flag; we'll catch this
             // case on the next launch.
@@ -88,9 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // Pick entries strictly newer than lastSeen, capped at 3 so the panel
         // doesn't become a wall of text after multiple skipped versions.
-        let entries = Changelog.entries
-            .filter { versionIsNewer($0.version, than: lastSeen) }
-            .prefix(3)
+        let entries = Changelog.entriesNewer(than: lastSeen, limit: 3)
         guard !entries.isEmpty else { return }
 
         // Show after a beat so the menubar/Combine wiring above finishes first
@@ -109,19 +108,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             self.whatsNewController?.showAndFocus()
         }
-    }
-
-    /// Lexicographic-by-component semver compare. Treats missing components
-    /// as 0 so "1.8" compares cleanly against "1.8.0".
-    private func versionIsNewer(_ a: String, than b: String) -> Bool {
-        let ax = a.split(separator: ".").compactMap { Int($0) }
-        let bx = b.split(separator: ".").compactMap { Int($0) }
-        for i in 0..<max(ax.count, bx.count) {
-            let lhs = i < ax.count ? ax[i] : 0
-            let rhs = i < bx.count ? bx[i] : 0
-            if lhs != rhs { return lhs > rhs }
-        }
-        return false
     }
 
     // MARK: - Status bar

@@ -32,6 +32,9 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Releasing tag=$REF version=$VERSION"
 
+      - name: Run unit tests (gate the release)
+        run: swift test
+
       - name: Build universal binary
         run: |
           swift build -c release \

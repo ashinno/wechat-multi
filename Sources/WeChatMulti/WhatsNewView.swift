@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import WeChatMultiCore
 
 /// "What's new" panel — auto-shown on the first launch after the bundle
 /// version bumps. Same brand language as About/Onboarding (jade-tinted

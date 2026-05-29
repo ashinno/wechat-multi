@@ -1,21 +1,21 @@
 import Foundation
 import AppKit
+import WeChatMultiCore
 
-/// Manages cloned WeChat.app bundles so multiple WeChat instances can run side by side.
+/// Manages cloned WeChat.app bundles so multiple WeChat instances can run side
+/// by side. WeChat on macOS enforces a singleton via its CFBundleIdentifier;
+/// each clone gets a unique bundle ID (hence its own sandbox container), which
+/// bypasses the check.
 ///
-/// WeChat on macOS enforces a singleton via its CFBundleIdentifier. Spawning the binary
-/// twice (with `open -n` or `nohup`) does not yield two windows — the second process
-/// exits as soon as it sees the existing one. The proven workaround is to clone
-/// `/Applications/WeChat.app` into uniquely-identified copies. Each clone gets its own
-/// bundle ID, which gives it its own sandbox container and bypasses the singleton check.
+/// As of v2.0 this is a thin orchestrator: the bug-prone *pure* logic (ps
+/// parsing, slot ordering, naming, versioning, backup) lives in the tested
+/// `WeChatMultiCore` library. This type owns the filesystem + process side.
 final class WeChatLauncher {
 
     // MARK: - Configuration
 
-    private let defaults = UserDefaults.standard
-    private let customPathKey = "WeChatAppPath"
-    private let slotNamesKey = "SlotNames"
-    private let slotOrderKey = "SlotDisplayOrder"
+    private let store: KeyValueStore
+    private let slots: SlotSettings
 
     private let defaultPaths = [
         "/Applications/WeChat.app",
@@ -23,63 +23,51 @@ final class WeChatLauncher {
         "\(NSHomeDirectory())/Applications/WeChat.app"
     ]
 
-    /// Directory that holds the cloned bundles. Lives under `~/Applications/` so users
-    /// can find clones in Finder if they want to pin one to the Dock manually.
-    let cloneRoot: URL = {
-        FileManager.default.homeDirectoryForCurrentUser
+    /// Directory that holds the cloned bundles.
+    let cloneRoot: URL
+
+    init(store: KeyValueStore = UserDefaults.standard, cloneRoot: URL? = nil) {
+        self.store = store
+        self.slots = SlotSettings(store: store)
+        self.cloneRoot = cloneRoot ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Applications/WeChat Multi", isDirectory: true)
-    }()
+    }
 
     var wechatAppPath: String? {
-        if let custom = defaults.string(forKey: customPathKey),
+        if let custom = store.string(forKey: DefaultsKey.customWeChatPath),
            FileManager.default.fileExists(atPath: custom) {
             return custom
         }
         return defaultPaths.first { FileManager.default.fileExists(atPath: $0) }
     }
 
-    func setCustomPath(_ path: String) {
-        defaults.set(path, forKey: customPathKey)
+    /// Sets a custom WeChat.app location. Returns false (and does nothing) if
+    /// the path doesn't contain a WeChat executable — defense in depth on top
+    /// of the Preferences picker's own validation.
+    @discardableResult
+    func setCustomPath(_ path: String) -> Bool {
+        guard Self.isWeChatBundle(path) else { return false }
+        store.set(path, forKey: DefaultsKey.customWeChatPath)
+        return true
     }
 
     func clearCustomPath() {
-        defaults.removeObject(forKey: customPathKey)
+        store.removeObject(forKey: DefaultsKey.customWeChatPath)
     }
 
-    // MARK: - Custom slot names
-
-    /// Returns the user-assigned name for the given slot, or nil if it has the
-    /// default name. Slot 0 (the original WeChat.app) is intentionally unnamed —
-    /// we don't try to manage its display name.
-    func slotName(slot: Int) -> String? {
-        guard slot > 0 else { return nil }
-        let dict = defaults.dictionary(forKey: slotNamesKey) as? [String: String] ?? [:]
-        return dict["\(slot)"]
+    static func isWeChatBundle(_ path: String) -> Bool {
+        FileManager.default.fileExists(atPath: "\(path)/Contents/MacOS/WeChat") ||
+        FileManager.default.fileExists(atPath: "\(path)/Contents/MacOS/微信")
     }
 
-    func setSlotName(slot: Int, name: String?) {
-        guard slot > 0 else { return }
-        var dict = defaults.dictionary(forKey: slotNamesKey) as? [String: String] ?? [:]
-        if let name, !name.isEmpty {
-            dict["\(slot)"] = name
-        } else {
-            dict.removeValue(forKey: "\(slot)")
-        }
-        defaults.set(dict, forKey: slotNamesKey)
-    }
+    // MARK: - Custom slot names (delegated to thread-safe SlotSettings)
 
-    /// The name we should write into the clone's Info.plist — the user's
-    /// custom name if set, otherwise "WeChat <slot>" as a default.
-    func cloneDisplayName(slot: Int) -> String {
-        return slotName(slot: slot) ?? "WeChat \(slot)"
-    }
+    func slotName(slot: Int) -> String? { slots.name(forSlot: slot) }
+    func setSlotName(slot: Int, name: String?) { slots.setName(name, forSlot: slot) }
+    func cloneDisplayName(slot: Int) -> String { slots.displayName(forSlot: slot) }
 
     // MARK: - Per-slot colors
 
-    /// Returns a stable, distinct color for the given slot so users can tell
-    /// instances apart at a glance. Slot 0 (the original WeChat) always uses
-    /// the WeChat green; clone slots cycle through a palette that maps well
-    /// in both light and dark menu contexts.
     func slotColor(slot: Int) -> NSColor {
         if slot == 0 {
             return NSColor(srgbRed: 0.027, green: 0.757, blue: 0.376, alpha: 1.0)
@@ -88,31 +76,20 @@ final class WeChatLauncher {
             .systemBlue, .systemPurple, .systemOrange, .systemPink,
             .systemTeal, .systemIndigo, .systemRed, .systemYellow
         ]
-        let index = (abs(slot) - 1) % palette.count
-        return palette[index]
+        return palette[(abs(slot) - 1) % palette.count]
     }
 
-    /// Renders a small filled circle in the slot's color, ready to be shown as
-    /// an NSMenuItem.image. Uses NSImage's deferred draw block so the image
-    /// re-renders correctly when the menu opens in a different appearance
-    /// (e.g. light → dark mode).
     func slotDotImage(slot: Int, size: CGFloat = 14) -> NSImage {
         let color = slotColor(slot: slot)
-        return NSImage(size: NSSize(width: size, height: size),
-                       flipped: false) { rect in
+        return NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
             color.setFill()
-            // Inset by 1px so the circle has a hairline of breathing room
-            // against neighboring menu text.
-            let path = NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1))
-            path.fill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
             return true
         }
     }
 
     // MARK: - Version detection
 
-    /// Reads CFBundleShortVersionString from the source `/Applications/WeChat.app`.
-    /// Used to decide which clones are stale and need a refresh.
     func wechatAppVersion() -> String? {
         guard let appPath = wechatAppPath else { return nil }
         return readPlistString(at: "\(appPath)/Contents/Info.plist",
@@ -124,20 +101,15 @@ final class WeChatLauncher {
         return readPlistString(at: plist, key: "CFBundleShortVersionString")
     }
 
-    /// Slots whose on-disk clone version differs from the current WeChat.app version.
-    /// If the source version cannot be read, returns an empty array (we can't decide).
+    /// Slots whose on-disk clone version differs from the current WeChat.app.
     func staleClones() -> [Int] {
         guard let sourceVersion = wechatAppVersion() else { return [] }
         return existingCloneSlots().filter { slot in
-            // Treat unreadable clone Info.plist as stale so the user is nudged
-            // to rebuild a corrupt bundle.
             guard let cloneVer = cloneVersion(slot: slot) else { return true }
-            return cloneVer != sourceVersion
+            return SemVer(cloneVer) != SemVer(sourceVersion)
         }
     }
 
-    /// Of the supplied slots, which ones are currently running. Refresh requires
-    /// these to be quit first, since we can't replace a live bundle reliably.
     func runningSlotsBlocking(_ slots: [Int]) -> [Int] {
         let running = Set(runningInstances().map(\.slot))
         return slots.filter { running.contains($0) }
@@ -145,8 +117,7 @@ final class WeChatLauncher {
 
     private func readPlistString(at path: String, key: String) -> String? {
         guard let data = FileManager.default.contents(atPath: path),
-              let plist = try? PropertyListSerialization.propertyList(from: data,
-                                                                       format: nil) as? [String: Any]
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
         else { return nil }
         return plist[key] as? String
     }
@@ -159,27 +130,25 @@ final class WeChatLauncher {
         case failed(String)
     }
 
-    /// Stages that prepareClone / refreshClone report so the UI can show a
-    /// human-readable status during the otherwise-silent multi-second copy.
-    /// Invoked from whatever queue the launcher runs on — callers should
-    /// marshal to main themselves.
     typealias ProgressCallback = (_ stage: String) -> Void
 
     func cloneURL(for slot: Int) -> URL {
-        cloneRoot.appendingPathComponent("WeChat \(slot).app", isDirectory: true)
+        cloneRoot.appendingPathComponent(CloneNaming.folderName(forSlot: slot), isDirectory: true)
     }
 
     func cloneBundleID(for slot: Int) -> String {
-        "com.wechatmulti.clone\(slot)"
+        CloneNaming.bundleID(forSlot: slot)
     }
 
     func cloneExists(slot: Int) -> Bool {
         FileManager.default.fileExists(atPath: cloneURL(for: slot).path)
     }
 
-    /// Materializes a clone for the given slot if it does not already exist.
-    /// Performs the bundle copy, bundle-ID rewrite, and ad-hoc re-sign.
-    /// Reports stage transitions through the optional `progress` callback.
+    /// Materializes a clone if it doesn't already exist. **Atomic**: the bundle
+    /// is copied + configured in a temporary location and only moved into its
+    /// final path once fully ready. A failure anywhere cleans up the temp and
+    /// leaves no half-configured bundle behind (the old code could leave a
+    /// broken bundle that `cloneExists` reported as ready).
     func prepareClone(slot: Int, progress: ProgressCallback? = nil) -> PrepareResult {
         guard let source = wechatAppPath else { return .sourceMissing }
         let target = cloneURL(for: slot)
@@ -188,35 +157,61 @@ final class WeChatLauncher {
             return .ready(target)
         }
 
+        let fm = FileManager.default
         do {
-            try FileManager.default.createDirectory(at: cloneRoot,
-                                                    withIntermediateDirectories: true)
+            try fm.createDirectory(at: cloneRoot, withIntermediateDirectories: true)
         } catch {
             return .failed("Could not create clones directory: \(error.localizedDescription)")
         }
 
+        purgeStaleTempBundles()
+
+        // Temp lives in the same directory (same APFS volume) so the copy is a
+        // cheap copy-on-write clone and the final move is an atomic rename.
+        let temp = cloneRoot.appendingPathComponent(
+            ".\(CloneNaming.folderName(forSlot: slot)).tmp-\(UUID().uuidString)",
+            isDirectory: true
+        )
+
+        func cleanup() { try? fm.removeItem(at: temp) }
+
         progress?("Copying WeChat.app (one-time setup)…")
-        // APFS supports copy-on-write clones, so `cp -Rc` is nearly instant for the
-        // hundreds of MB that WeChat.app weighs in at.
-        if let copyError = run("/bin/cp", ["-Rc", source, target.path]) {
+        if let copyError = run("/bin/cp", ["-Rc", source, temp.path]) {
+            cleanup()
             return .failed("Copying WeChat.app failed: \(copyError)")
         }
 
         progress?("Configuring & re-signing…")
-        // Rewrite the bundle identifier and display names so macOS treats this clone
-        // as a separate app with its own sandbox container.
-        if let writeError = writeIdentityToBundle(at: target, slot: slot) {
+        if let writeError = writeIdentityToBundle(at: temp, slot: slot) {
+            cleanup()
             return .failed(writeError)
         }
 
+        // Re-check target right before the move — another launch may have won
+        // the race and created it. If so, keep theirs and discard ours.
+        if fm.fileExists(atPath: target.path) {
+            cleanup()
+            return .ready(target)
+        }
+        do {
+            try fm.moveItem(at: temp, to: target)
+        } catch {
+            cleanup()
+            return .failed("Could not finalize clone: \(error.localizedDescription)")
+        }
         return .ready(target)
     }
 
-    /// Renames a clone in-place — updates CFBundleName/CFBundleDisplayName in
-    /// the bundle's Info.plist and re-signs ad-hoc. The bundle identifier is
-    /// left alone so the sandbox container (and signed-in WeChat session) is
-    /// preserved. The change becomes visible in Cmd+Tab/Dock the next time
-    /// the clone is launched.
+    /// Removes any leftover `.WeChat N.app.tmp-*` dirs from interrupted prepares.
+    private func purgeStaleTempBundles() {
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: cloneRoot, includingPropertiesForKeys: nil) else { return }
+        for url in entries where url.lastPathComponent.hasPrefix(".WeChat ")
+            && url.lastPathComponent.contains(".tmp-") {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
     @discardableResult
     func renameClone(slot: Int, newName: String?) -> String? {
         setSlotName(slot: slot, name: newName)
@@ -224,9 +219,6 @@ final class WeChatLauncher {
         return writeIdentityToBundle(at: cloneURL(for: slot), slot: slot)
     }
 
-    /// Deletes the on-disk clone bundle and recreates it from the current
-    /// WeChat.app. The sandbox container lives in a separate path keyed by
-    /// bundle ID, so the user's WeChat session survives a refresh.
     func refreshClone(slot: Int, progress: ProgressCallback? = nil) -> PrepareResult {
         let target = cloneURL(for: slot)
         if FileManager.default.fileExists(atPath: target.path) {
@@ -240,9 +232,8 @@ final class WeChatLauncher {
         return prepareClone(slot: slot, progress: progress)
     }
 
-    /// Writes our identity (bundle ID + display name) into a clone bundle's
-    /// Info.plist, drops the now-invalid Tencent signature, and ad-hoc re-signs.
-    /// Called both during initial clone creation and on rename.
+    /// Writes our identity (bundle ID + display name) into a bundle's Info.plist,
+    /// drops the now-invalid signature, and ad-hoc re-signs.
     private func writeIdentityToBundle(at target: URL, slot: Int) -> String? {
         let plist = target.appendingPathComponent("Contents/Info.plist").path
         let bundleID = cloneBundleID(for: slot)
@@ -251,21 +242,17 @@ final class WeChatLauncher {
 
         _ = run(plistBuddy, ["-c", "Set :CFBundleIdentifier \(bundleID)", plist])
         _ = run(plistBuddy, ["-c", "Set :CFBundleName \(displayName)", plist])
-        // CFBundleDisplayName may be absent — Set will fail; Add as fallback.
         if run(plistBuddy, ["-c", "Set :CFBundleDisplayName \(displayName)", plist]) != nil {
             _ = run(plistBuddy, ["-c", "Add :CFBundleDisplayName string \(displayName)", plist])
         }
 
-        // Drop the original signature (Info.plist edit invalidates it anyway).
-        let signatureDir = target.appendingPathComponent("Contents/_CodeSignature")
-        try? FileManager.default.removeItem(at: signatureDir)
+        try? FileManager.default.removeItem(
+            at: target.appendingPathComponent("Contents/_CodeSignature"))
 
-        if let signError = run("/usr/bin/codesign",
-                               ["--force", "--deep", "--sign", "-", target.path]) {
+        if let signError = run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", target.path]) {
             NSLog("Ad-hoc sign warning for slot \(slot): \(signError)")
         }
         _ = run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", target.path])
-
         return nil
     }
 
@@ -275,26 +262,14 @@ final class WeChatLauncher {
         }
     }
 
-    /// Delete a single clone bundle and (optionally) its sandbox container.
-    /// Refuses to delete a running clone — caller must quit it first.
-    ///
-    /// By default the sandbox container at
-    /// `~/Library/Containers/com.wechatmulti.cloneN/` is preserved, so if the
-    /// user later re-creates the same slot the WeChat session reattaches.
-    /// Pass `removeSandboxContainer: true` for a full reset that also wipes
-    /// the signed-in login data.
-    ///
-    /// Returns `nil` on success, an error description otherwise.
     @discardableResult
     func deleteClone(slot: Int, removeSandboxContainer: Bool = false) -> String? {
         guard slot > 0 else {
             return "The main account isn't a clone — it can't be deleted from here."
         }
-
         if runningInstances().contains(where: { $0.slot == slot }) {
             return "Quit Slot \(slot) before deleting it."
         }
-
         let target = cloneURL(for: slot)
         if FileManager.default.fileExists(atPath: target.path) {
             do {
@@ -303,48 +278,29 @@ final class WeChatLauncher {
                 return "Could not delete the bundle: \(error.localizedDescription)"
             }
         }
-
-        // Drop the user-assigned name so a future slot with the same number
-        // starts from the default "WeChat N" name (unless renamed again).
         setSlotName(slot: slot, name: nil)
-
         if removeSandboxContainer {
-            let container = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Containers/\(cloneBundleID(for: slot))")
-            try? FileManager.default.removeItem(at: container)
+            try? FileManager.default.removeItem(at: sandboxContainerURL(slot: slot))
         }
-
         return nil
     }
 
-    /// True if a sandbox container exists for this slot. Used by the delete
-    /// confirmation to decide whether to surface the "also reset login data"
-    /// checkbox or hide it (nothing to reset).
     func sandboxContainerExists(slot: Int) -> Bool {
         guard slot > 0 else { return false }
-        let container = FileManager.default.homeDirectoryForCurrentUser
+        return FileManager.default.fileExists(atPath: sandboxContainerURL(slot: slot).path)
+    }
+
+    private func sandboxContainerURL(slot: Int) -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Containers/\(cloneBundleID(for: slot))")
-        return FileManager.default.fileExists(atPath: container.path)
     }
 
     func existingCloneSlots() -> [Int] {
-        guard let entries = try? FileManager.default.contentsOfDirectory(at: cloneRoot,
-                                                                          includingPropertiesForKeys: nil) else {
-            return []
-        }
-        let regex = try? NSRegularExpression(pattern: #"^WeChat (\d+)\.app$"#)
-        var slots: [Int] = []
-        for url in entries {
-            let name = url.lastPathComponent
-            let range = NSRange(name.startIndex..., in: name)
-            if let match = regex?.firstMatch(in: name, range: range),
-               match.numberOfRanges == 2,
-               let slotRange = Range(match.range(at: 1), in: name),
-               let slot = Int(name[slotRange]) {
-                slots.append(slot)
-            }
-        }
-        return slots.sorted()
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: cloneRoot, includingPropertiesForKeys: nil) else { return [] }
+        return entries
+            .compactMap { CloneNaming.parseSlot(fromFolderName: $0.lastPathComponent) }
+            .sorted()
     }
 
     // MARK: - Launching
@@ -355,29 +311,19 @@ final class WeChatLauncher {
         case failed(String)
     }
 
-    /// Picks the lowest free slot, prepares its clone, and launches it.
     func launchNextAvailableInstance(progress: ProgressCallback? = nil) -> LaunchResult {
         let running = Set(runningInstances().map { $0.slot })
         var slot = 1
-        while running.contains(slot) {
-            slot += 1
-        }
+        while running.contains(slot) { slot += 1 }
         return launchSpecificInstance(slot: slot, progress: progress)
     }
 
-    /// Returns true when launching this slot will require the slow one-time
-    /// clone copy. Callers use this to decide whether to surface a progress UI.
-    func slotNeedsPreparation(slot: Int) -> Bool {
-        !cloneExists(slot: slot)
-    }
+    func slotNeedsPreparation(slot: Int) -> Bool { !cloneExists(slot: slot) }
 
-    func launchSpecificInstance(slot: Int,
-                                progress: ProgressCallback? = nil) -> LaunchResult {
+    func launchSpecificInstance(slot: Int, progress: ProgressCallback? = nil) -> LaunchResult {
         switch prepareClone(slot: slot, progress: progress) {
-        case .sourceMissing:
-            return .sourceMissing
-        case .failed(let reason):
-            return .failed(reason)
+        case .sourceMissing: return .sourceMissing
+        case .failed(let reason): return .failed(reason)
         case .ready(let url):
             progress?("Launching…")
             if let err = run("/usr/bin/open", ["-na", url.path]) {
@@ -390,14 +336,13 @@ final class WeChatLauncher {
     // MARK: - Process inspection
 
     struct InstanceInfo {
-        let slot: Int          // 0 means the original /Applications/WeChat.app
+        let slot: Int
         let pid: Int32
         let startTime: String
         let bundlePath: String
     }
 
-    /// Returns one entry per WeChat main process — the original /Applications/WeChat.app
-    /// and any running clones under `~/Applications/WeChat Multi/`.
+    /// Spawns `ps` and hands its output to the tested `ProcessTable` parser.
     func runningInstances() -> [InstanceInfo] {
         let pipe = Pipe()
         let task = Process()
@@ -406,78 +351,21 @@ final class WeChatLauncher {
         task.standardOutput = pipe
         task.standardError = FileHandle.nullDevice
 
-        do {
-            try task.run()
-        } catch {
-            return []
-        }
+        do { try task.run() } catch { return [] }
 
-        // Read BEFORE waitUntilExit: ps output for a full system exceeds the
-        // pipe buffer (~16 KB), so the child would block on write and
-        // waitUntilExit would never return. Drain first, then wait.
+        // Drain before waitUntilExit to avoid pipe-buffer deadlock.
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         task.waitUntilExit()
         guard let output = String(data: data, encoding: .utf8) else { return [] }
 
-        let cloneRootPath = cloneRoot.path
-        var results: [InstanceInfo] = []
-
-        for line in output.split(separator: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            let parts = trimmed.split(separator: " ", omittingEmptySubsequences: true)
-            guard parts.count >= 7, let pid = Int32(parts[0]) else { continue }
-
-            let startTime = parts[1..<6].joined(separator: " ")
-            let command = parts[6..<parts.count].joined(separator: " ")
-
-            // First gate: must end with the main WeChat executable. WeChat ships
-            // helper binaries (WeChatAppEx, WeChatPlugin, crashpad_handler, etc.)
-            // inside nested .app bundles; none of them are named just "WeChat"
-            // or "微信" so this check excludes them cleanly.
-            let isWeChatBinary = command.hasSuffix("/Contents/MacOS/WeChat") ||
-                                 command.hasSuffix("/Contents/MacOS/微信")
-            guard isWeChatBinary else { continue }
-
-            let bundle = command
-                .replacingOccurrences(of: "/Contents/MacOS/WeChat", with: "")
-                .replacingOccurrences(of: "/Contents/MacOS/微信", with: "")
-
-            // Defend against WeChat's nested helper bundle, which technically
-            // has the path …/WeChat.app/Contents/MacOS/WeChatAppEx.app — the
-            // suffix check above already filters this, but be doubly safe by
-            // requiring the bundle to end with a .app component we recognize.
-            let bundleName = (bundle as NSString).lastPathComponent
-            guard bundleName.hasSuffix(".app") else { continue }
-
-            // Categorize: clone (under our cloneRoot, name "WeChat <N>.app")
-            // or the original (anywhere else, typically /Applications/WeChat.app).
-            if bundle.hasPrefix(cloneRootPath) {
-                // Clone naming convention: "WeChat <N>.app". Anything that
-                // matches the prefix+suffix but doesn't have a parseable slot
-                // number is treated as a stray and skipped.
-                let trimmedName = bundleName
-                    .dropFirst("WeChat ".count)
-                    .dropLast(".app".count)
-                guard bundleName.hasPrefix("WeChat "),
-                      let slot = Int(trimmedName), slot > 0 else { continue }
-                results.append(InstanceInfo(slot: slot, pid: pid,
-                                             startTime: startTime, bundlePath: bundle))
-            } else if bundleName == "WeChat.app" || bundleName == "微信.app" {
-                // The original /Applications/WeChat.app (slot 0).
-                results.append(InstanceInfo(slot: 0, pid: pid,
-                                             startTime: startTime, bundlePath: bundle))
-            }
-        }
-        return results.sorted { $0.slot < $1.slot }
+        return ProcessTable
+            .parseInstances(psOutput: output, cloneRootPath: cloneRoot.path)
+            .map { InstanceInfo(slot: $0.slot, pid: $0.pid,
+                                startTime: $0.startTime, bundlePath: $0.bundlePath) }
     }
 
-    func quitAll() {
-        _ = run("/usr/bin/killall", ["WeChat"])
-    }
-
-    func quitInstance(pid: Int32) {
-        kill(pid, SIGTERM)
-    }
+    func quitAll() { _ = run("/usr/bin/killall", ["WeChat"]) }
+    func quitInstance(pid: Int32) { kill(pid, SIGTERM) }
 
     func revealInstance(pid: Int32) {
         let script = """
@@ -488,30 +376,77 @@ final class WeChatLauncher {
         _ = run("/usr/bin/osascript", ["-e", script])
     }
 
-    // MARK: - Helpers
+    // MARK: - Slot display order (delegated to thread-safe SlotSettings)
 
-    /// Runs a subprocess synchronously and returns an error description on non-zero exit,
-    /// or nil on success.
+    func slotDisplayOrder() -> [Int] { slots.displayOrder() }
+    func setSlotDisplayOrder(_ order: [Int]) { slots.setDisplayOrder(order) }
+    func moveSlot(_ slot: Int, before targetSlot: Int?) { slots.moveSlot(slot, before: targetSlot) }
+    @discardableResult
+    func materializeDisplayOrder(present: [Int]) -> [Int] { slots.materialize(present: present) }
+
+    // MARK: - Health check
+
+    struct HealthIssue: Equatable {
+        let slot: Int
+        let summary: String
+    }
+
+    /// Confirms each clone is intact: binary present + executable, bundle ID
+    /// matches, and `codesign --verify` passes. Synchronous — run off-main.
+    func healthCheck() -> [HealthIssue] {
+        var issues: [HealthIssue] = []
+        for slot in existingCloneSlots() {
+            let bundle = cloneURL(for: slot)
+            let binary = bundle.appendingPathComponent("Contents/MacOS/WeChat").path
+
+            if !FileManager.default.fileExists(atPath: binary) {
+                issues.append(HealthIssue(slot: slot, summary: "Missing main executable")); continue
+            }
+            if !FileManager.default.isExecutableFile(atPath: binary) {
+                issues.append(HealthIssue(slot: slot, summary: "Main executable is not executable")); continue
+            }
+            let plistPath = bundle.appendingPathComponent("Contents/Info.plist").path
+            let actualID = readPlistString(at: plistPath, key: "CFBundleIdentifier")
+            let expectedID = cloneBundleID(for: slot)
+            if actualID != expectedID {
+                issues.append(HealthIssue(
+                    slot: slot,
+                    summary: actualID == nil ? "Info.plist unreadable"
+                                             : "Bundle identifier drifted (\(actualID!) ≠ \(expectedID))"
+                )); continue
+            }
+            if runStatus("/usr/bin/codesign", ["--verify", "--verbose=0", bundle.path]) != 0 {
+                issues.append(HealthIssue(slot: slot, summary: "Code signature failed verification"))
+            }
+        }
+        return issues
+    }
+
+    // MARK: - Backup / restore (delegated to tested SettingsBackup)
+
+    func exportSettingsData() throws -> Data {
+        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        return try SettingsBackup.exportData(store: store, appVersion: appVersion)
+    }
+
+    func importSettings(from data: Data) throws {
+        try SettingsBackup.restore(from: data, to: store)
+    }
+
+    // MARK: - Process helpers
+
     @discardableResult
     private func run(_ launchPath: String, _ arguments: [String]) -> String? {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: launchPath)
         task.arguments = arguments
-
         let errPipe = Pipe()
         task.standardOutput = FileHandle.nullDevice
         task.standardError = errPipe
+        do { try task.run() } catch { return error.localizedDescription }
 
-        do {
-            try task.run()
-        } catch {
-            return error.localizedDescription
-        }
-
-        // Drain stderr before waitUntilExit to avoid pipe-buffer deadlock.
         let data = errPipe.fileHandleForReading.readDataToEndOfFile()
         task.waitUntilExit()
-
         if task.terminationStatus != 0 {
             let msg = String(data: data, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? "exit code \(task.terminationStatus)"
@@ -520,162 +455,13 @@ final class WeChatLauncher {
         return nil
     }
 
-    // MARK: - Slot display order (user-controlled, persisted)
-
-    /// User-defined display order — list of slot IDs in the order they should
-    /// appear in the popover. Slots not in this list are appended at the end
-    /// in numerical order; missing slots are filtered out automatically.
-    /// Slot 0 (main account) participates in ordering just like clones.
-    func slotDisplayOrder() -> [Int] {
-        defaults.array(forKey: slotOrderKey) as? [Int] ?? []
-    }
-
-    func setSlotDisplayOrder(_ order: [Int]) {
-        defaults.set(order, forKey: slotOrderKey)
-    }
-
-    /// Reorder: move `slot` to the position immediately before `targetSlot`.
-    /// If `targetSlot == nil`, appends to the end. No-op if `slot == targetSlot`.
-    func moveSlot(_ slot: Int, before targetSlot: Int?) {
-        guard slot != targetSlot else { return }
-        var order = slotDisplayOrder()
-        order.removeAll { $0 == slot }
-        if let target = targetSlot, let idx = order.firstIndex(of: target) {
-            order.insert(slot, at: idx)
-        } else {
-            order.append(slot)
-        }
-        setSlotDisplayOrder(order)
-    }
-
-    // MARK: - Health check
-
-    /// A single issue discovered by `healthCheck` — broken signature, bundle ID
-    /// drift, missing binary, etc. Each can be fixed by `refreshClone(slot:)`.
-    struct HealthIssue: Equatable {
-        let slot: Int
-        let summary: String
-    }
-
-    /// Walks every on-disk clone bundle and confirms it's still in a sane
-    /// state: Info.plist points at the right CFBundleIdentifier, the main
-    /// executable exists and is +x, and `codesign --verify` succeeds. Returns
-    /// the slots that have at least one problem.
-    ///
-    /// Synchronous — callers should run it on a background queue.
-    func healthCheck() -> [HealthIssue] {
-        var issues: [HealthIssue] = []
-        for slot in existingCloneSlots() {
-            let bundle = cloneURL(for: slot)
-
-            // 1. Binary exists and is executable
-            let binary = bundle.appendingPathComponent("Contents/MacOS/WeChat").path
-            if !FileManager.default.fileExists(atPath: binary) {
-                issues.append(HealthIssue(slot: slot,
-                                          summary: "Missing main executable"))
-                continue
-            }
-            if !FileManager.default.isExecutableFile(atPath: binary) {
-                issues.append(HealthIssue(slot: slot,
-                                          summary: "Main executable is not executable"))
-                continue
-            }
-
-            // 2. Bundle identifier matches what we expect for this slot
-            let plistPath = bundle.appendingPathComponent("Contents/Info.plist").path
-            let actualID = readPlistString(at: plistPath, key: "CFBundleIdentifier")
-            let expectedID = cloneBundleID(for: slot)
-            if actualID != expectedID {
-                issues.append(HealthIssue(
-                    slot: slot,
-                    summary: actualID == nil
-                        ? "Info.plist unreadable"
-                        : "Bundle identifier drifted (\(actualID!) ≠ \(expectedID))"
-                ))
-                continue
-            }
-
-            // 3. codesign --verify passes
-            let exit = runStatus("/usr/bin/codesign",
-                                 ["--verify", "--verbose=0", bundle.path])
-            if exit != 0 {
-                issues.append(HealthIssue(slot: slot,
-                                          summary: "Code signature failed verification"))
-            }
-        }
-        return issues
-    }
-
-    /// Like `run` but reports the raw termination status instead of an error
-    /// string. Used by health checks where we just want a pass/fail signal.
     private func runStatus(_ launchPath: String, _ arguments: [String]) -> Int32 {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: launchPath)
         task.arguments = arguments
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
-        do {
-            try task.run()
-            task.waitUntilExit()
-            return task.terminationStatus
-        } catch {
-            return -1
-        }
-    }
-
-    // MARK: - Backup / restore
-
-    /// Codable settings payload — JSON-encoded as `WeChat Multi Settings.json`
-    /// from the Preferences window. Captures everything user-tunable so a new
-    /// Mac install can start from the previous machine's configuration.
-    ///
-    /// Slot avatar colors aren't included because they're deterministic from
-    /// slot number (no per-slot override yet). If we add custom colors later,
-    /// add them here and bump `version`.
-    struct BackupPayload: Codable {
-        let version: Int                       // schema version
-        let exportedAt: String                 // ISO-8601 timestamp
-        let appVersion: String                 // CFBundleShortVersionString
-        let slotNames: [String: String]        // slot index (as string) → name
-        let slotOrder: [Int]                   // display order
-        let wechatAppPath: String?             // nil = default auto-detection
-        let didShowFirstLaunchHint: Bool       // skip onboarding on restore
-
-        static let currentVersion = 1
-    }
-
-    func exportSettingsData() throws -> Data {
-        let slotNamesDict = defaults.dictionary(forKey: slotNamesKey) as? [String: String] ?? [:]
-        let payload = BackupPayload(
-            version: BackupPayload.currentVersion,
-            exportedAt: ISO8601DateFormatter().string(from: Date()),
-            appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?",
-            slotNames: slotNamesDict,
-            slotOrder: slotDisplayOrder(),
-            wechatAppPath: defaults.string(forKey: customPathKey),
-            didShowFirstLaunchHint: defaults.bool(forKey: "DidShowFirstLaunchHint")
-        )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return try encoder.encode(payload)
-    }
-
-    /// Applies a settings JSON file. Bails on schema-version mismatch — we
-    /// could migrate forward but right now there's only v1 to worry about.
-    func importSettings(from data: Data) throws {
-        let payload = try JSONDecoder().decode(BackupPayload.self, from: data)
-        guard payload.version == BackupPayload.currentVersion else {
-            throw NSError(domain: "WeChatMulti.Backup", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: "Unsupported settings file (schema v\(payload.version), this app expects v\(BackupPayload.currentVersion))."
-            ])
-        }
-        defaults.set(payload.slotNames, forKey: slotNamesKey)
-        defaults.set(payload.slotOrder, forKey: slotOrderKey)
-        if let path = payload.wechatAppPath {
-            defaults.set(path, forKey: customPathKey)
-        } else {
-            defaults.removeObject(forKey: customPathKey)
-        }
-        defaults.set(payload.didShowFirstLaunchHint, forKey: "DidShowFirstLaunchHint")
+        do { try task.run(); task.waitUntilExit(); return task.terminationStatus }
+        catch { return -1 }
     }
 }

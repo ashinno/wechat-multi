@@ -27,6 +27,9 @@ jobs:
           swift --version
           xcrun --show-sdk-path
 
+      - name: Run unit tests (WeChatMultiCore)
+        run: swift test
+
       - name: Build (universal)
         run: |
           swift build -c release \

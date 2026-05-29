@@ -203,27 +203,50 @@ defaults delete com.wechatmulti.app 2>/dev/null
   risk; if WeChat changes how it enforces single-instance behavior in a
   future update, the clone trick may need to be revisited
 
-## Project layout
+## Architecture
+
+The code is split into a pure, fully-tested core and a thin AppKit/SwiftUI shell:
 
 ```
 .
-├── Package.swift                 # Swift Package Manager manifest
-├── Sources/WeChatMulti/
-│   ├── main.swift                # NSApplication entry point
-│   ├── AppDelegate.swift         # Menu bar UI
-│   └── WeChatLauncher.swift      # Clone management + ps inspection
-├── Resources/Info.plist          # Bundle metadata (LSUIElement = true)
-├── build.sh                      # swift build → .app bundle assembly
-└── install.sh                    # Copy to /Applications and launch
+├── Package.swift                       # 3 targets: Core (lib), app (exe), tests
+├── Sources/
+│   ├── WeChatMultiCore/                # Foundation-only, 100% unit-tested
+│   │   ├── KeyValueStore.swift         #   settings seam + DefaultsKey catalog
+│   │   ├── SemVer.swift                #   version parsing / comparison
+│   │   ├── ProcessTable.swift          #   ps-output parser (locale-robust)
+│   │   ├── SlotOrdering.swift          #   display-order reorder/resolve
+│   │   ├── CloneNaming.swift           #   slot ↔ bundle-id / folder mapping
+│   │   ├── SlotSettings.swift          #   thread-safe names + order store
+│   │   ├── SettingsBackup.swift        #   JSON export/import + validation
+│   │   └── Changelog.swift             #   What's-new data
+│   └── WeChatMulti/                    # the app (UI + filesystem orchestration)
+│       ├── WeChatLauncher.swift        #   clone engine (atomic), composes Core
+│       ├── AppDelegate.swift / *View   #   menu bar, popover, windows
+│       └── …
+├── Tests/WeChatMultiCoreTests/         # 61 tests across 8 suites — run in CI
+├── Resources/Info.plist                # Bundle metadata (LSUIElement = true)
+├── build.sh                            # swift build → .app bundle assembly
+└── install.sh                          # Copy to /Applications and launch
+```
+
+All the historically bug-prone logic — the `ps` parser, slot ordering, version
+comparison, naming conventions, and backup/restore — lives in `WeChatMultiCore`
+with no AppKit or filesystem dependencies, so it's exercised deterministically
+by `swift test` on every push and release.
+
+```bash
+swift test          # run the full Core suite
 ```
 
 ## Contributing
 
 PRs welcome. A few directions if you're looking for ideas:
 
-- Notification when a clone finishes preparing for the first time
+- Sparkle auto-update (with EdDSA-signed appcast from CI)
 - Homebrew cask
 - Notarization (would remove the right-click-Open ceremony)
+- Global hotkey to toggle the popover from anywhere
 
 ## License
 

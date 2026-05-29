@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+import WeChatMultiCore
 
 /// Hosts `WhatsNewView` in a small floating window — opened on first launch
 /// after a version bump. Mirrors the Onboarding/About controller pattern.

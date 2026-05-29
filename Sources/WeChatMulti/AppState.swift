@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+import WeChatMultiCore
 
 /// One row in the popover's account list. Combines a slot (running or just
 /// on-disk) into a single user-facing record.
@@ -86,21 +87,15 @@ final class AppState: ObservableObject {
             ))
         }
 
-        // Apply the user's saved display order. Slots present in the order
-        // come first (in that order); anything new is appended at the end.
-        let savedOrder = launcher.slotDisplayOrder()
+        // Apply the user's saved display order via the tested pure resolver:
+        // ordered slots first (filtering stale entries), then any new slots
+        // appended in their natural sequence.
         let bySlot = Dictionary(uniqueKeysWithValues: unordered.map { ($0.id, $0) })
-        var seen = Set<Int>()
-        var next: [Account] = []
-        for slotID in savedOrder {
-            if let acc = bySlot[slotID] {
-                next.append(acc)
-                seen.insert(slotID)
-            }
-        }
-        for acc in unordered where !seen.contains(acc.id) {
-            next.append(acc)
-        }
+        let resolvedOrder = SlotOrdering.resolve(
+            displayOrder: launcher.slotDisplayOrder(),
+            available: unordered.map(\.id)
+        )
+        let next = resolvedOrder.compactMap { bySlot[$0] }
 
         if next != accounts {
             accounts = next
@@ -112,14 +107,11 @@ final class AppState: ObservableObject {
     /// numbers don't change — they remain tied to their sandbox container.
     func moveAccount(_ slot: Int, before targetSlot: Int?) {
         guard slot != targetSlot else { return }
-        // Make sure the current display order is materialized in defaults,
-        // not just implicit ("everything in numerical order"). Otherwise the
-        // first move would re-order all entries that were never persisted.
-        var existing = launcher.slotDisplayOrder()
-        for acc in accounts where !existing.contains(acc.id) {
-            existing.append(acc.id)
-        }
-        launcher.setSlotDisplayOrder(existing)
+        // Materialize the current (possibly implicit numeric) order into
+        // defaults first, so a single drag doesn't reshuffle un-persisted
+        // entries. Then perform the move — both steps are serialized inside
+        // SlotSettings.
+        launcher.materializeDisplayOrder(present: accounts.map(\.id))
         launcher.moveSlot(slot, before: targetSlot)
         refresh()
     }
