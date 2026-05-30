@@ -5,9 +5,17 @@ Package.resolved
 *.xcodeproj
 *.xcworkspace
 
+# .NET (windows/)
+[Bb]in/
+[Oo]bj/
+*.user
+.vs/
+
 # Build output
 dist/
-*.app/
+# NB: don't use a bare "*.app/" here — on case-insensitive macOS filesystems it
+# also matches the Windows "WeChatMulti.App/" project dir. The built macOS
+# bundle lives under dist/ (above), which already covers it.
 
 # macOS
 .DS_Store

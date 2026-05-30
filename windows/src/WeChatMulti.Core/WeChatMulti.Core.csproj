@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Pure, cross-platform logic — no Windows APIs, no UI. This is the Windows
+    analog of the macOS WeChatMultiCore Swift library: the bug-prone logic
+    (version compare, ordering, settings, backup, the mutex-name registry, and
+    instance selection) lives here behind interfaces and is 100% unit-tested.
+    Targets net8.0 (not -windows) so it builds and tests on any platform.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>WeChatMulti.Core</RootNamespace>
+  </PropertyGroup>
+
+</Project>

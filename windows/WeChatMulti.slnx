@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/WeChatMulti.App/WeChatMulti.App.csproj" />
+    <Project Path="src/WeChatMulti.Core/WeChatMulti.Core.csproj" />
+    <Project Path="src/WeChatMulti.Native/WeChatMulti.Native.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/WeChatMulti.Core.Tests/WeChatMulti.Core.Tests.csproj" />
+  </Folder>
+</Solution>

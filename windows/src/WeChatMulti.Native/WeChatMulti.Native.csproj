@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    P/Invoke layer: the Win32/NT calls that enumerate handles, close the WeChat
+    instance mutex, locate the install, and manage launch-at-login. Implements
+    the Core interfaces (IHandleScanner, IMutexCloser, IProcessLister,
+    IProcessLauncher) so all selection logic stays in the tested Core.
+    Windows-only TFM — built by CI on windows-latest.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>WeChatMulti.Native</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WeChatMulti.Core\WeChatMulti.Core.csproj" />
+  </ItemGroup>
+
+</Project>

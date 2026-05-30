@@ -1,0 +1,12 @@
+<Project>
+  <!-- Shared settings for every project in the Windows solution. -->
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <Authors>ashinno</Authors>
+    <Product>WeChat Multi</Product>
+    <Company>WeChat Multi</Company>
+  </PropertyGroup>
+</Project>

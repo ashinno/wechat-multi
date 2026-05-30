@@ -24,6 +24,11 @@ The result: you can sign in to as many accounts as you want — work and
 personal, two phone numbers, a burner — each in its own window, each
 surviving restarts.
 
+> **Windows?** A Windows port is in development under [`windows/`](windows/) —
+> it uses a different technique (releasing WeChat's named-mutex single-instance
+> lock, since Windows has no app-bundle cloning). See the
+> [port plan](docs/windows-port-plan.md) and [`windows/README.md`](windows/README.md).
+
 ## What the menu looks like
 
 ```
