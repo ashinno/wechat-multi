@@ -169,6 +169,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             self?.appState.runHealthCheck()
         }
+        // Take a throttled settings snapshot off the main thread shortly after
+        // launch (deduped + rate-limited inside the launcher).
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            self?.launcher.captureSettingsSnapshotIfDue()
+        }
         Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             self?.appState.runHealthCheck()
         }

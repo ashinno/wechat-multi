@@ -96,6 +96,9 @@ their signed-in sessions).
   helper app, persists across reboots)
 - 🔄 **Auto-detects WeChat updates** and offers to refresh stale clones,
   preserving each clone's signed-in session
+- 💾 **Automatic settings snapshots** — rotating backups of your slot names,
+  order, and preferences (taken on launch and before any import); roll back
+  from **Preferences → Restore from Snapshot…** if something goes wrong
 - 📋 **Lists running instances** with their PIDs and start times
 - 🪟 **Bring any instance to the front**, quit individual instances, or quit all
 - 🔍 **Auto-detects WeChat** in `/Applications`; falls back to a file picker
