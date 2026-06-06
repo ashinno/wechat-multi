@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import WeChatMultiCore
 
 /// Preferences window — the "crafted Mac utility" surface. Hero card at the
 /// top establishes brand and orientation; grouped settings cards below carry
@@ -323,12 +324,19 @@ struct PreferencesView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                Text("WeChat Multi also keeps automatic snapshots of these settings (on launch and before any import), so a mistake is recoverable.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 8) {
                 Button("Export Settings…") { exportSettings() }
                     .help("Save your slot names, order, and preferences to a JSON file")
                 Button("Import Settings…") { importSettings() }
                     .help("Load a previously-exported JSON file. Asks for confirmation before overwriting current preferences.")
+                Button("Restore from Snapshot…") { restoreFromSnapshot() }
+                    .help("Roll your settings back to an automatic snapshot taken on launch or before an import.")
                 Spacer()
             }
             .controlSize(.small)
@@ -506,6 +514,59 @@ struct PreferencesView: View {
         } catch {
             let alert = NSAlert()
             alert.messageText = "Import Failed"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
+    }
+
+    private func restoreFromSnapshot() {
+        let snapshots = launcher.settingsSnapshots()
+        guard !snapshots.isEmpty else {
+            let alert = NSAlert()
+            alert.messageText = "No Snapshots Yet"
+            alert.informativeText = """
+            WeChat Multi hasn't taken any settings snapshots yet. They're \
+            created automatically on launch and just before an import.
+            """
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+
+        let chooser = NSAlert()
+        chooser.messageText = "Restore from Snapshot"
+        chooser.informativeText = """
+        Pick a snapshot to roll your slot names, display order, WeChat.app path, \
+        and onboarding state back to. Clone bundles and signed-in sessions aren't \
+        affected.
+        """
+        chooser.alertStyle = .warning
+
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 280, height: 25))
+        for snapshot in snapshots {
+            popup.addItem(withTitle: formatter.string(from: snapshot.createdAt))
+        }
+        chooser.accessoryView = popup
+        chooser.addButton(withTitle: "Restore")
+        chooser.addButton(withTitle: "Cancel")
+
+        guard chooser.runModal() == .alertFirstButtonReturn else { return }
+        let index = popup.indexOfSelectedItem
+        guard index >= 0, index < snapshots.count else { return }
+        let chosen = snapshots[index]
+
+        do {
+            try launcher.restoreSettingsSnapshot(id: chosen.id)
+            refresh()
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Restore Failed"
             alert.informativeText = error.localizedDescription
             alert.alertStyle = .warning
             alert.addButton(withTitle: "OK")

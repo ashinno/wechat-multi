@@ -16,6 +16,7 @@ final class WeChatLauncher {
 
     private let store: KeyValueStore
     private let slots: SlotSettings
+    private let snapshots: SnapshotStore
 
     private let defaultPaths = [
         "/Applications/WeChat.app",
@@ -26,11 +27,18 @@ final class WeChatLauncher {
     /// Directory that holds the cloned bundles.
     let cloneRoot: URL
 
-    init(store: KeyValueStore = UserDefaults.standard, cloneRoot: URL? = nil) {
+    init(store: KeyValueStore = UserDefaults.standard,
+         cloneRoot: URL? = nil,
+         snapshotStore: SnapshotStore? = nil) {
         self.store = store
         self.slots = SlotSettings(store: store)
+        self.snapshots = snapshotStore ?? DirectorySnapshotStore()
         self.cloneRoot = cloneRoot ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Applications/WeChat Multi", isDirectory: true)
+    }
+
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
     }
 
     var wechatAppPath: String? {
@@ -425,12 +433,33 @@ final class WeChatLauncher {
     // MARK: - Backup / restore (delegated to tested SettingsBackup)
 
     func exportSettingsData() throws -> Data {
-        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
-        return try SettingsBackup.exportData(store: store, appVersion: appVersion)
+        try SettingsBackup.exportData(store: store, appVersion: appVersion)
     }
 
     func importSettings(from data: Data) throws {
+        // Snapshot the current state first so a regretted import is recoverable.
+        try? SettingsSnapshots.capture(from: store, appVersion: appVersion, into: snapshots)
         try SettingsBackup.restore(from: data, to: store)
+    }
+
+    // MARK: - Automatic settings snapshots (rotating, tested SettingsSnapshots)
+
+    /// Take a throttled snapshot of the current settings. Safe to call on every
+    /// launch — it dedups identical state and rate-limits to one per interval.
+    /// Failures are swallowed: a backup that can't be written must never block
+    /// the app from starting.
+    func captureSettingsSnapshotIfDue() {
+        try? SettingsSnapshots.captureIfDue(from: store, appVersion: appVersion, into: snapshots)
+    }
+
+    /// Available settings snapshots, newest first.
+    func settingsSnapshots() -> [SnapshotInfo] {
+        SettingsSnapshots.list(in: snapshots)
+    }
+
+    /// Roll the live settings back to a chosen snapshot.
+    func restoreSettingsSnapshot(id: String) throws {
+        try SettingsSnapshots.restore(id: id, from: snapshots, to: store)
     }
 
     // MARK: - Process helpers

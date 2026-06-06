@@ -42,10 +42,21 @@ public enum SettingsBackup {
         }
     }
 
+    // MARK: - Content comparison
+
+    /// True when two payloads carry the same *user settings*, ignoring volatile
+    /// metadata (`exportedAt`, `appVersion`, schema `version`). The snapshot
+    /// engine uses this to avoid writing back-to-back duplicates.
+    public static func sameSettings(_ a: Payload, _ b: Payload) -> Bool {
+        a.slotNames == b.slotNames &&
+        a.slotOrder == b.slotOrder &&
+        a.wechatAppPath == b.wechatAppPath &&
+        a.didShowOnboarding == b.didShowOnboarding
+    }
+
     // MARK: - Export
 
-    public static func makePayload(store: KeyValueStore, appVersion: String, now: Date) -> Payload {
-        let names = (store.dictionary(forKey: DefaultsKey.slotNames) as? [String: String]) ?? [:]
+    public static func makePayload(store: KeyValueStore, appVersion: String, now: Date) -> Payload {        let names = (store.dictionary(forKey: DefaultsKey.slotNames) as? [String: String]) ?? [:]
         let order = (store.array(forKey: DefaultsKey.slotDisplayOrder) as? [Int]) ?? []
         return Payload(
             version: Payload.currentVersion,
