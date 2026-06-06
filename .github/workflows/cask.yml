@@ -1,0 +1,80 @@
+name: update-cask
+
+# Keep Casks/wechat-multi.rb in lockstep with releases. The release workflow
+# creates a *draft* GitHub release; when the maintainer publishes it, this job
+# downloads the attached zip, recomputes its sha256, and bumps the cask on main.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to sync the cask to (e.g. v2.0.0) — must already exist"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-cask
+  cancel-in-progress: false
+
+jobs:
+  update-cask:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          # token with contents:write so the bump commit can be pushed back to main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve tag/version
+        id: ver
+        run: |
+          TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
+          case "$TAG" in
+            v*.*.*) ;;
+            *) echo "::error::Tag '$TAG' is not a vX.Y.Z release tag — skipping"; exit 1 ;;
+          esac
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "Syncing cask to $TAG (version ${TAG#v})"
+
+      - name: Download release asset and compute sha256
+        id: sha
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          ASSET="WeChat-Multi-${TAG}.zip"
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ASSET" \
+            --dir "$RUNNER_TEMP"
+          SHA=$(sha256sum "$RUNNER_TEMP/$ASSET" | awk '{print $1}')
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Asset $ASSET sha256=$SHA"
+
+      - name: Update cask file
+        run: |
+          CASK="Casks/wechat-multi.rb"
+          VERSION="${{ steps.ver.outputs.version }}"
+          SHA="${{ steps.sha.outputs.sha256 }}"
+          sed -i -E "s/^(  version )\"[^\"]*\"/\1\"${VERSION}\"/" "$CASK"
+          sed -i -E "s/^(  sha256 )\"[^\"]*\"/\1\"${SHA}\"/" "$CASK"
+          echo "----- updated cask -----"
+          cat "$CASK"
+
+      - name: Commit and push if changed
+        run: |
+          if git diff --quiet -- Casks/wechat-multi.rb; then
+            echo "Cask already up to date for ${{ steps.ver.outputs.tag }} — nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/wechat-multi.rb
+          git commit -m "cask: bump to ${{ steps.ver.outputs.version }}"
+          git push origin HEAD:main

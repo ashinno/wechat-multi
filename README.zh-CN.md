@@ -55,6 +55,17 @@ Mac 版微信限制每次只能启动一个实例,第二次启动的进程会被
 签名(没有 Apple 开发者证书签名),首次打开时 macOS 可能会提示拒绝,
 请 **右键 → 打开** 一次绕过 Gatekeeper。
 
+### Homebrew
+
+```bash
+brew tap ashinno/wechat-multi https://github.com/ashinno/wechat-multi
+brew install --cask wechat-multi
+```
+
+升级:`brew upgrade --cask wechat-multi`(每次发布新版本时,CI 会自动更新
+Cask 版本号)。卸载:`brew uninstall --cask wechat-multi`(加 `--zap` 可一并
+删除克隆体及其登录数据)。
+
 ## 功能
 
 - 🍎 **原生菜单栏应用** —— 不占 Dock、不用 Electron,二进制只有约 190 KB
@@ -197,7 +208,6 @@ defaults delete com.wechatmulti.app 2>/dev/null
 - 通用二进制构建(目前仅支持 arm64)
 - 通过 `SMAppService` 实现"登录时启动"
 - 完整的 `.icns` 图标和"关于"面板插画
-- 支持 Homebrew Cask 安装
 - 通知:首次克隆完成时弹出提示
 
 ## 许可证

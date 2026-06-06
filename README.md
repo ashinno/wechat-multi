@@ -71,6 +71,18 @@ Don't want to compile? Grab the pre-built `.app` from
 drag it into `/Applications`, and double-click. macOS may ask you to right-
 click → Open the first time because it's ad-hoc signed.
 
+### Homebrew
+
+```bash
+brew tap ashinno/wechat-multi https://github.com/ashinno/wechat-multi
+brew install --cask wechat-multi
+```
+
+Upgrade with `brew upgrade --cask wechat-multi`; the cask version is bumped
+automatically by CI whenever a new release is published. To remove it later,
+`brew uninstall --cask wechat-multi` (add `--zap` to also delete clones and
+their signed-in sessions).
+
 ## Features
 
 - 🍎 **Native menu bar app** — no Dock clutter, no Electron, ~190 KB binary
@@ -249,7 +261,6 @@ swift test          # run the full Core suite
 PRs welcome. A few directions if you're looking for ideas:
 
 - Sparkle auto-update (with EdDSA-signed appcast from CI)
-- Homebrew cask
 - Notarization (would remove the right-click-Open ceremony)
 - Global hotkey to toggle the popover from anywhere
 
