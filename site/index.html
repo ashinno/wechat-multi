@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WeChat Multi — Run multiple WeChat accounts on macOS</title>
+  <meta name="description" content="Run multiple WeChat accounts side by side on macOS from a single menu bar icon. Native, ~190 KB, no Electron, open source." />
+  <meta name="theme-color" content="#07A050" />
+
+  <!-- Open Graph / social -->
+  <meta property="og:title" content="WeChat Multi — multiple WeChat accounts on macOS" />
+  <meta property="og:description" content="One menu bar icon. As many signed-in WeChat accounts as you want — work, personal, a burner — each in its own window." />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="https://raw.githubusercontent.com/ashinno/wechat-multi/main/docs/icon.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+  <link rel="apple-touch-icon" href="assets/icon.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="nav">
+    <a class="nav__brand" href="#top" aria-label="WeChat Multi home">
+      <img src="assets/icon.png" width="28" height="28" alt="" />
+      <span>WeChat Multi</span>
+    </a>
+    <nav class="nav__links" aria-label="Primary">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#install">Install</a>
+      <a class="nav__gh" href="https://github.com/ashinno/wechat-multi" rel="noopener">GitHub ↗</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <!-- ───────────────────────── Hero ───────────────────────── -->
+    <section class="hero" id="top">
+      <div class="hero__glow" aria-hidden="true"></div>
+      <div class="hero__inner">
+        <div class="hero__copy">
+          <span class="eyebrow">macOS&nbsp;13+ · Native · Open source</span>
+          <h1>Run <em>every</em> WeChat account<br />side by side on macOS.</h1>
+          <p class="lede">
+            WeChat for Mac only lets you launch one copy at a time. <strong>WeChat Multi</strong>
+            clones the app into isolated, uniquely-identified copies — so work, personal, two
+            phone numbers, a burner can each stay signed in, in their own window, from a single
+            menu&nbsp;bar icon.
+          </p>
+          <div class="hero__cta">
+            <a class="btn btn--primary" href="https://github.com/ashinno/wechat-multi/releases/latest" rel="noopener">
+              Download for macOS
+            </a>
+            <a class="btn btn--ghost" href="#install">Install with Homebrew</a>
+          </div>
+          <ul class="hero__meta">
+            <li>~190&nbsp;KB binary</li>
+            <li>Universal (arm64&nbsp;+&nbsp;x86_64)</li>
+            <li>No Electron, no dependencies</li>
+          </ul>
+        </div>
+
+        <!-- Faithful HTML rendition of the menu-bar popover -->
+        <div class="hero__art">
+          <div class="popover" role="img" aria-label="The WeChat Multi menu bar popover showing three accounts">
+            <div class="popover__head">
+              <span class="stackglyph" aria-hidden="true">
+                <span></span><span></span><span></span>
+              </span>
+              <span class="popover__title">WeChat Multi</span>
+              <span class="pill">3 accounts</span>
+            </div>
+
+            <div class="popover__rows">
+              <div class="row">
+                <span class="dot dot--green" aria-hidden="true"></span>
+                <span class="row__name">Main account</span>
+                <span class="row__state row__state--on">running</span>
+              </div>
+              <div class="row row--hover">
+                <span class="dot dot--blue" aria-hidden="true"></span>
+                <span class="row__name">Work <small>· Slot 1</small></span>
+                <span class="row__state row__state--on">running</span>
+              </div>
+              <div class="row">
+                <span class="dot dot--purple" aria-hidden="true"></span>
+                <span class="row__name">Personal <small>· Slot 2</small></span>
+                <span class="row__state">not running</span>
+              </div>
+            </div>
+
+            <div class="popover__foot">
+              <span class="foot__item foot__item--accent">＋ Add account…<kbd>⌘N</kbd></span>
+              <span class="foot__item">⚙ Preferences…</span>
+              <span class="foot__item">⏻ Quit WeChat Multi<kbd>⌘Q</kbd></span>
+            </div>
+          </div>
+          <p class="hero__art-cap">The whole app lives in your menu bar.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────────────────────── Features ───────────────────────── -->
+    <section class="section" id="features">
+      <div class="section__head">
+        <span class="kicker">Features</span>
+        <h2>A crafted Mac utility, not a hack.</h2>
+        <p>Everything you'd expect from a native menu bar app — and nothing you wouldn't.</p>
+      </div>
+
+      <div class="grid">
+        <article class="card">
+          <div class="card__icon">🍎</div>
+          <h3>Native menu bar app</h3>
+          <p>AppKit + SwiftUI, ~190&nbsp;KB. No Dock clutter, no Electron, no background bloat.</p>
+        </article>
+        <article class="card">
+          <div class="card__icon">⚡</div>
+          <h3>One click to launch</h3>
+          <p>Spin up a fresh, fully-isolated WeChat instance from the popover — ⌘N and you're in.</p>
+        </article>
+        <article class="card">
+          <div class="card__icon">🏷️</div>
+          <h3>Per-slot custom names</h3>
+          <p>Name a clone “Work” or “Personal”. The name shows up in Cmd+Tab and the Dock.</p>
+        </article>
+        <article class="card">
+          <div class="card__icon">🎨</div>
+          <h3>Color-coded avatars</h3>
+          <p>Each clone gets a distinct dot color so you can tell instances apart at a glance.
+            <span class="swatches" aria-hidden="true">
+              <i class="dot dot--green"></i><i class="dot dot--blue"></i><i class="dot dot--purple"></i><i class="dot dot--orange"></i><i class="dot dot--pink"></i><i class="dot dot--teal"></i><i class="dot dot--indigo"></i>
+            </span>
+          </p>
+        </article>
+        <article class="card">
+          <div class="card__icon">🔄</div>
+          <h3>Auto-detects updates</h3>
+          <p>When WeChat updates itself, one click rebuilds stale clones — preserving every signed-in session.</p>
+        </article>
+        <article class="card">
+          <div class="card__icon">🚀</div>
+          <h3>Launch at login</h3>
+          <p>Built on <code>SMAppService</code> — no helper app, persists across reboots.</p>
+        </article>
+        <article class="card">
+          <div class="card__icon">🪟</div>
+          <h3>Manage every instance</h3>
+          <p>Bring any window to the front, quit one instance, or quit them all. PIDs and start times listed live.</p>
+        </article>
+        <article class="card">
+          <div class="card__icon">🔒</div>
+          <h3>Isolated sessions</h3>
+          <p>Each clone gets its own macOS sandbox container — separate logins, separate chat history.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- ───────────────────────── How it works ───────────────────────── -->
+    <section class="section section--alt" id="how">
+      <div class="section__head">
+        <span class="kicker">How it works</span>
+        <h2>Cloning, not cracking.</h2>
+        <p>
+          WeChat enforces a singleton: launch a second copy and it silently dies. WeChat Multi
+          sidesteps that by giving each instance its own identity — so macOS treats it as a
+          genuinely separate app.
+        </p>
+      </div>
+
+      <ol class="steps">
+        <li class="step">
+          <span class="step__n">1</span>
+          <div>
+            <h3>Copy-on-write clone</h3>
+            <p><code>cp -Rc</code> from <code>/Applications/WeChat.app</code> into <code>~/Applications/WeChat&nbsp;Multi/</code>. APFS makes it instant and uses no extra disk until WeChat writes.</p>
+          </div>
+        </li>
+        <li class="step">
+          <span class="step__n">2</span>
+          <div>
+            <h3>Rewrite the identity</h3>
+            <p><code>CFBundleIdentifier</code> → <code>com.wechatmulti.cloneN</code>, plus your custom display name. A unique bundle ID means a fresh sandbox container.</p>
+          </div>
+        </li>
+        <li class="step">
+          <span class="step__n">3</span>
+          <div>
+            <h3>Re-sign &amp; de-quarantine</h3>
+            <p>Ad-hoc <code>codesign</code> (the original Tencent signature is invalidated by the plist edit) and strip the Gatekeeper quarantine flag.</p>
+          </div>
+        </li>
+        <li class="step">
+          <span class="step__n">4</span>
+          <div>
+            <h3>Launch in isolation</h3>
+            <p><code>open -na</code> the clone. WeChat's “another instance is running” check never fires — it's a different app now.</p>
+          </div>
+        </li>
+      </ol>
+
+      <p class="note">
+        The original <code>/Applications/WeChat.app</code> is left untouched — keep launching it
+        from the Dock as your “Main account”. This tool is unofficial and not affiliated with Tencent.
+      </p>
+    </section>
+
+    <!-- ───────────────────────── Install ───────────────────────── -->
+    <section class="section" id="install">
+      <div class="section__head">
+        <span class="kicker">Install</span>
+        <h2>Up and running in a minute.</h2>
+        <p>Three ways in, all free. macOS&nbsp;13 Ventura or later required.</p>
+      </div>
+
+      <div class="install">
+        <div class="install__card install__card--feature">
+          <h3>Homebrew</h3>
+          <p>The easiest path — and it auto-updates with each release.</p>
+          <div class="code">
+            <button class="copy" type="button" aria-label="Copy">Copy</button>
+            <pre><code>brew tap ashinno/wechat-multi https://github.com/ashinno/wechat-multi
+brew install --cask wechat-multi</code></pre>
+          </div>
+          <p class="install__hint">Both lines are required — the <code>tap</code> isn't optional, since the cask lives in this repo rather than homebrew/cask. Upgrade later with <code>brew upgrade --cask wechat-multi</code>.</p>
+        </div>
+
+        <div class="install__card">
+          <h3>Download the app</h3>
+          <p>Grab the pre-built, universal <code>.app</code> from the latest release, then drag it into <code>/Applications</code>.</p>
+          <a class="btn btn--primary btn--block" href="https://github.com/ashinno/wechat-multi/releases/latest" rel="noopener">Latest release ↗</a>
+          <p class="install__hint">It's ad-hoc signed, so on first launch right-click → <strong>Open</strong> to get past Gatekeeper (just once).</p>
+        </div>
+
+        <div class="install__card">
+          <h3>Build from source</h3>
+          <p>SwiftPM, no third-party dependencies. A pure, fully-tested core under the hood.</p>
+          <div class="code">
+            <button class="copy" type="button" aria-label="Copy">Copy</button>
+            <pre><code>git clone https://github.com/ashinno/wechat-multi.git
+cd wechat-multi
+./install.sh</code></pre>
+          </div>
+          <p class="install__hint">Needs Xcode Command Line Tools. <code>swift test</code> runs the 61-test core suite.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────────────────────── Windows ───────────────────────── -->
+    <section class="section section--alt">
+      <div class="windows">
+        <div class="windows__copy">
+          <span class="kicker">On the way</span>
+          <h2>A Windows port is in development.</h2>
+          <p>
+            Windows has no app-bundle cloning, so the port uses a different technique — releasing
+            WeChat's named-mutex single-instance lock. It's a .NET core with native interop and a
+            tray app, already under <code>windows/</code> with CI.
+          </p>
+          <a class="btn btn--ghost" href="https://github.com/ashinno/wechat-multi/blob/main/docs/windows-port-plan.md" rel="noopener">Read the port plan ↗</a>
+        </div>
+        <div class="windows__badge" aria-hidden="true">⊞</div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="footer__inner">
+      <div class="footer__brand">
+        <img src="assets/icon.png" width="34" height="34" alt="" />
+        <div>
+          <strong>WeChat Multi</strong>
+          <span>Multiple WeChat accounts, one menu bar.</span>
+        </div>
+      </div>
+      <nav class="footer__links" aria-label="Footer">
+        <a href="https://github.com/ashinno/wechat-multi" rel="noopener">GitHub</a>
+        <a href="https://github.com/ashinno/wechat-multi/releases/latest" rel="noopener">Releases</a>
+        <a href="https://github.com/ashinno/wechat-multi/blob/main/README.md" rel="noopener">Docs</a>
+        <a href="https://github.com/ashinno/wechat-multi/blob/main/LICENSE" rel="noopener">MIT License</a>
+        <a href="https://github.com/ashinno/wechat-multi/issues" rel="noopener">Report an issue</a>
+      </nav>
+    </div>
+    <p class="footer__legal">
+      © 2026 ashinno · MIT licensed. WeChat is a trademark of Tencent Holdings Ltd.
+      This project is not affiliated with, endorsed by, or sponsored by Tencent.
+    </p>
+  </footer>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

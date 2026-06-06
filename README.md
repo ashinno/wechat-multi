@@ -31,6 +31,13 @@ surviving restarts.
 
 ## What the menu looks like
 
+<p align="center">
+  <img src="docs/menu-popover.png" width="420" alt="The WeChat Multi menu bar popover: three accounts (Main account, Work, Personal) with color-coded status dots, and footer actions to add an account, open Preferences, or quit." />
+</p>
+
+The whole app lives in your menu bar. Left- or right-click the icon for the
+popover above; the older text sketch below shows every action it exposes:
+
 ```
  💬 WC 2                                          ⏰ 9:41
  ┌──────────────────────────────────────┐
@@ -82,6 +89,14 @@ Upgrade with `brew upgrade --cask wechat-multi`; the cask version is bumped
 automatically by CI whenever a new release is published. To remove it later,
 `brew uninstall --cask wechat-multi` (add `--zap` to also delete clones and
 their signed-in sessions).
+
+## Website
+
+A showcase site lives in [`site/`](site/) — a dependency-free static page you
+can deploy anywhere. It ships with both a GitHub Pages workflow and Vercel
+config; see [`site/README.md`](site/README.md) for details.
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/ashinno/wechat-multi&root-directory=site&project-name=wechat-multi&repository-name=wechat-multi)
 
 ## Features
 

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="WeChat Multi icon">
+  <defs>
+    <linearGradient id="jade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1FC56B"/>
+      <stop offset="1" stop-color="#07A050"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#jade)"/>
+  <rect x="118" y="96" width="216" height="216" rx="40" fill="#ffffff" opacity="0.18"/>
+  <rect x="150" y="136" width="216" height="216" rx="40" fill="#ffffff" opacity="0.42"/>
+  <rect x="182" y="186" width="240" height="240" rx="48" fill="#ffffff"/>
+  <circle cx="254" cy="306" r="16" fill="#21B85F"/>
+  <circle cx="302" cy="306" r="16" fill="#21B85F"/>
+  <circle cx="350" cy="306" r="16" fill="#21B85F"/>
+  <circle cx="412" cy="172" r="34" fill="#FA3E3E"/>
+</svg>
