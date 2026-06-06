@@ -30,3 +30,6 @@ dist/
 # Logs
 *.log
 /tmp/wcm*.log
+
+# Local screenshot previews of the showcase site (rendered on demand, not deployed)
+site/.preview/
